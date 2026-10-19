@@ -49,9 +49,9 @@ Produk yang paling laris di Bandung tahun 2026 adalah Es Kopi Susu Gula Aren den
 ## How it works
 
 - The model gets the schema built from Postgres table and column comments, plus three sample rows per table. The comments carry the business rules ("only `completed` orders are revenue"), so the prompt stays short.
-- Its SQL is parsed with sqlglot. Only one SELECT over the five sales tables gets through: no DML or DDL, no writes hidden in a CTE, no `SELECT INTO`, no `pg_sleep`, `pg_read_file`, `dblink` and friends. What runs is the re-rendered tree, with a `LIMIT` added or clamped.
-- It runs as a separate Postgres role that can only `SELECT` those tables, in a read-only transaction with a statement timeout. If the validator ever misses something, the database still says no.
-- When Postgres returns an error (wrong column, bad GROUP BY), the error goes back to the model once for a corrected query.
+- Its SQL is parsed with sqlglot. Only one SELECT over the five sales tables gets through: no DML or DDL, no writes hidden in a CTE, no `SELECT INTO`. Postgres-only functions have to be on a short allowlist, so `pg_sleep`, `pg_read_file`, `dblink` and friends are out. What runs is the re-rendered tree, with a `LIMIT` added or clamped.
+- It runs as a separate Postgres role that can only `SELECT` those tables, in a read-only transaction with a statement timeout. If the validator ever misses something, the database still refuses writes and anything over the timeout. Catalog views like `pg_roles` stay readable to every role, though, so keeping queries on the sales tables is the validator's job.
+- When Postgres returns an error (wrong column, bad GROUP BY) or the validator rejects the query (a made-up table, a function that isn't allowed), the reason goes back to the model once for a corrected query.
 - A second short call turns the rows into one sentence in the question's language. The chart is picked by plain rules: label + number is a bar chart, date + number is a line chart, anything else is just a table.
 - `sqlchat-mcp` exposes `describe_schema`, `check_sql` and `run_sql` over stdio. There the client's model writes the SQL, and it goes through the same checks.
 
@@ -113,7 +113,7 @@ The server reads the same `.env`, so it connects as the read-only role. Then ask
 uv run pytest
 ```
 
-The validator cases, the pipeline (with a fake chat model, including the retry path) and the MCP tools run offline. The integration tests are skipped unless you point them at a scratch database. They rebuild its tables, check that the role really can't write or run past the timeout, and run the re-rendered SQL on real Postgres:
+The validator cases, the pipeline (with a fake chat model, including the retry path) and the MCP tools run offline. The integration tests are skipped unless you point them at a scratch database. They rebuild its tables, check that the role really can't write, read other tables or run past the timeout, and run the re-rendered SQL on real Postgres:
 
 ```bash
 TEST_ADMIN_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/text_to_sql \
@@ -123,7 +123,7 @@ uv run pytest -m integration
 
 ## Notes
 
-- I don't trust the validator alone. A parser allowlist is easy to get subtly wrong, so the role permissions and read-only transaction are the real wall. The validator mostly gives the model a clear reason it can act on.
+- A parser allowlist is easy to get subtly wrong. My first version collected CTE names from the whole query, so `WITH pg_roles AS (...)` inside a subquery let the real `pg_roles` through outside it. That probe and a few cousins are test cases now. For writes the role and the read-only transaction are the real wall; for catalog reads the validator is all there is.
 - With a 9B model on a 6 GB RTX 3060 a question takes about 5 to 10 seconds once the model is loaded. The first one after a model swap is slower.
 - A 9B model handles the everyday questions here, but it's still a 9B model. Read the SQL before you trust a number; it's always one click away.
 - Next I'd add a small eval set of questions with known answers, so a prompt or model change shows up as a number instead of a feeling.
