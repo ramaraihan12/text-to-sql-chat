@@ -20,6 +20,13 @@ PostgreSQL rejected that query:
 
 Reply with a corrected query in a ```sql block, nothing else."""
 
+SQL_REJECTED = """\
+The query checker rejected that query:
+{reason}
+
+Reply with a corrected query in a ```sql block, nothing else. If a read-only SELECT on the \
+tables above can't answer the question, reply with one line: NO_SQL: <reason>"""
+
 ANSWER_SYSTEM = """\
 You turn query results into a one-sentence answer for a coffee-shop manager.
 - Answer in the same language as the question (English or Bahasa Indonesia).

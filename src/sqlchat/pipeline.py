@@ -13,12 +13,12 @@ from sqlchat.charts import ChartSpec, suggest_chart
 from sqlchat.config import Settings
 from sqlchat.db import Database, QueryResult, describe_error
 from sqlchat.llm import build_chat_model
-from sqlchat.prompts import ANSWER_SYSTEM, ANSWER_USER, SQL_RETRY, SQL_SYSTEM
+from sqlchat.prompts import ANSWER_SYSTEM, ANSWER_USER, SQL_REJECTED, SQL_RETRY, SQL_SYSTEM
 from sqlchat.schema import ALLOWED_TABLES
 from sqlchat.tools import SqlTools
 from sqlchat.validator import UnsafeQueryError
 
-# The first try plus one retry with the Postgres error fed back.
+# The first try plus one retry, with the Postgres error or the validator's reason fed back.
 MAX_ATTEMPTS = 2
 ROWS_FOR_SUMMARY = 20
 
@@ -32,6 +32,7 @@ Status = Literal["ok", "blocked", "failed", "no_sql"]
 class Attempt:
     sql: str
     error: str | None = None
+    blocked: bool = False  # rejected by the validator, so it never reached Postgres
 
 
 @dataclass
@@ -65,14 +66,11 @@ class TextToSql:
             try:
                 safe, result = self.tools.run_sql(candidate)
             except UnsafeQueryError as exc:
-                attempts.append(Attempt(candidate, str(exc)))
-                return Answer(
-                    question,
-                    "blocked",
-                    f"Blocked by the guardrails: {exc}",
-                    sql=candidate,
-                    attempts=attempts,
-                )
+                # Usually an honest mistake (a made-up table, stray prose), so the model gets
+                # the reason and one more go. The retry is validated like any other query.
+                attempts.append(Attempt(candidate, str(exc), blocked=True))
+                messages += [AIMessage(reply), HumanMessage(SQL_REJECTED.format(reason=exc))]
+                continue
             except psycopg.Error as exc:
                 # No SQLSTATE means the connection itself failed; the model can't fix that.
                 if exc.sqlstate is None:
@@ -94,6 +92,14 @@ class TextToSql:
             )
 
         last = attempts[-1]
+        if last.blocked:
+            return Answer(
+                question,
+                "blocked",
+                f"Blocked by the guardrails: {last.error}",
+                sql=last.sql,
+                attempts=attempts,
+            )
         return Answer(
             question,
             "failed",

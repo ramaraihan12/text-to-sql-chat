@@ -103,7 +103,7 @@ def _sidebar(settings: Settings) -> None:
             "- Connects as a read-only Postgres role\n"
             "- One SELECT at a time, on the five sales tables only\n"
             f"- At most {settings.max_rows} rows and {timeout:g}s per query\n"
-            "- A failed query gets one retry with the error"
+            "- A failed or rejected query gets one retry with the reason"
         )
         st.caption(f"Model: `{settings.llm_provider}` / `{settings.llm_model}`")
         if st.button("Clear chat", icon=":material/delete_sweep:"):
@@ -129,7 +129,7 @@ def _render_answer(turn: Turn, settings: Settings) -> None:
         return
     if answer.status == "blocked":
         st.warning(_escape(answer.text))
-        st.code(answer.sql or "", language="sql")
+        _attempts(answer)
         return
     if answer.status == "failed":
         st.error(_escape(answer.text))
@@ -162,7 +162,8 @@ def _meta(turn: Turn, max_rows: int) -> str:
 def _attempts(answer: Answer) -> None:
     for number, attempt in enumerate(answer.attempts, start=1):
         if attempt.error:
-            st.caption(f"Try {number} failed: {_escape(attempt.error)}")
+            outcome = "was rejected" if attempt.blocked else "failed"
+            st.caption(f"Try {number} {outcome}: {_escape(attempt.error)}")
             st.code(attempt.sql, language="sql")
 
 
