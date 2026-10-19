@@ -66,6 +66,14 @@ class Database:
             )
 
 
+def describe_error(exc: psycopg.Error) -> str:
+    """One line for the model: the message plus Postgres' hint, which is often the useful part."""
+    text = str(exc).strip()
+    primary = exc.diag.message_primary or (text.splitlines()[0] if text else type(exc).__name__)
+    hint = exc.diag.message_hint
+    return f"{primary} HINT: {hint}" if hint else primary
+
+
 def _kind(type_oid: int) -> ColumnKind:
     if type_oid in _NUMBER_OIDS:
         return "number"

@@ -11,7 +11,7 @@ from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, System
 
 from sqlchat.charts import ChartSpec, suggest_chart
 from sqlchat.config import Settings
-from sqlchat.db import Database, QueryResult
+from sqlchat.db import Database, QueryResult, describe_error
 from sqlchat.llm import build_chat_model
 from sqlchat.prompts import ANSWER_SYSTEM, ANSWER_USER, SQL_RETRY, SQL_SYSTEM
 from sqlchat.schema import ALLOWED_TABLES
@@ -77,7 +77,7 @@ class TextToSql:
                 # No SQLSTATE means the connection itself failed; the model can't fix that.
                 if exc.sqlstate is None:
                     raise
-                error = _describe(exc)
+                error = describe_error(exc)
                 attempts.append(Attempt(candidate, error))
                 messages += [AIMessage(reply), HumanMessage(SQL_RETRY.format(error=error))]
                 continue
@@ -133,17 +133,5 @@ def _text(message: BaseMessage) -> str:
     return _THINK.sub("", message.text).strip()
 
 
-def _describe(exc: psycopg.Error) -> str:
-    # The hint is often the useful part ("Perhaps you meant to reference the column ...").
-    primary = exc.diag.message_primary or _first_line(str(exc))
-    hint = exc.diag.message_hint
-    return f"{primary} HINT: {hint}" if hint else primary
-
-
 def _cell(value: object) -> str:
     return "NULL" if value is None else str(value)
-
-
-def _first_line(text: str) -> str:
-    stripped = text.strip()
-    return stripped.splitlines()[0] if stripped else "unknown database error"
