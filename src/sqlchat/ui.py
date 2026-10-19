@@ -15,6 +15,9 @@ from sqlchat.pipeline import Answer, TextToSql, build_pipeline
 
 log = logging.getLogger(__name__)
 
+USER_AVATAR = ":material/person:"
+BOT_AVATAR = ":material/local_cafe:"
+
 EXAMPLES = {
     "English": [
         "Which city had the highest revenue in September 2026?",
@@ -69,9 +72,9 @@ def main() -> None:
     if not question:
         return
 
-    with st.chat_message("user"):
+    with st.chat_message("user", avatar=USER_AVATAR):
         st.markdown(_escape(question))
-    with st.chat_message("assistant"):
+    with st.chat_message("assistant", avatar=BOT_AVATAR):
         started = time.perf_counter()
         try:
             with st.spinner("Writing the query and checking it..."):
@@ -113,9 +116,9 @@ def _queue(question: str) -> None:
 
 
 def _render_turn(turn: Turn, settings: Settings) -> None:
-    with st.chat_message("user"):
+    with st.chat_message("user", avatar=USER_AVATAR):
         st.markdown(_escape(turn.answer.question))
-    with st.chat_message("assistant"):
+    with st.chat_message("assistant", avatar=BOT_AVATAR):
         _render_answer(turn, settings)
 
 
