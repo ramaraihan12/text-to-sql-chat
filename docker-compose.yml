@@ -1,0 +1,47 @@
+# Postgres, a one-off setup job (tables, seed data, read-only role) and the Streamlit app.
+# Ollama runs on the host; the app reaches it through host.docker.internal.
+services:
+  db:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: text_to_sql
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d text_to_sql"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  setup:
+    build: .
+    image: text-to-sql-chat
+    command: ["sqlchat", "setup"]
+    environment:
+      DATABASE_URL: postgresql://sales_reader:sales_reader@db:5432/text_to_sql
+      ADMIN_DATABASE_URL: postgresql://postgres:postgres@db:5432/text_to_sql
+    depends_on:
+      db:
+        condition: service_healthy
+
+  app:
+    build: .
+    image: text-to-sql-chat
+    ports:
+      - "8501:8501"
+    environment:
+      DATABASE_URL: postgresql://sales_reader:sales_reader@db:5432/text_to_sql
+      LLM_MODEL: ${LLM_MODEL:-qwen3.5:9b}
+      OLLAMA_BASE_URL: http://host.docker.internal:11434
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      setup:
+        condition: service_completed_successfully
+
+volumes:
+  pgdata:
