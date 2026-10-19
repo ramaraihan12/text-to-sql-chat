@@ -10,8 +10,11 @@ from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
 
 from sqlchat.charts import ChartSpec, suggest_chart
-from sqlchat.db import QueryResult
+from sqlchat.config import Settings
+from sqlchat.db import Database, QueryResult
+from sqlchat.llm import build_chat_model
 from sqlchat.prompts import ANSWER_SYSTEM, ANSWER_USER, SQL_RETRY, SQL_SYSTEM
+from sqlchat.schema import ALLOWED_TABLES
 from sqlchat.tools import SqlTools
 from sqlchat.validator import UnsafeQueryError
 
@@ -45,10 +48,10 @@ class Answer:
 class TextToSql:
     def __init__(self, model: BaseChatModel, tools: SqlTools) -> None:
         self._model = model
-        self._tools = tools
+        self.tools = tools
 
     def ask(self, question: str) -> Answer:
-        system = SQL_SYSTEM.format(schema=self._tools.schema_text, today=date.today().isoformat())
+        system = SQL_SYSTEM.format(schema=self.tools.schema_text, today=date.today().isoformat())
         messages: list[BaseMessage] = [SystemMessage(system), HumanMessage(question)]
         attempts: list[Attempt] = []
 
@@ -60,7 +63,7 @@ class TextToSql:
 
             candidate = extract_sql(reply)
             try:
-                safe, result = self._tools.run_sql(candidate)
+                safe, result = self.tools.run_sql(candidate)
             except UnsafeQueryError as exc:
                 attempts.append(Attempt(candidate, str(exc)))
                 return Answer(
@@ -111,6 +114,12 @@ class TextToSql:
         )
         reply = self._model.invoke([SystemMessage(ANSWER_SYSTEM), HumanMessage(prompt)])
         return " ".join(_text(reply).split())
+
+
+def build_pipeline(settings: Settings) -> TextToSql:
+    db = Database(settings.database_url, settings.statement_timeout_ms)
+    db.ensure_read_only_role(ALLOWED_TABLES)
+    return TextToSql(build_chat_model(settings), SqlTools(db, settings.max_rows))
 
 
 def extract_sql(reply: str) -> str:

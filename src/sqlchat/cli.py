@@ -2,12 +2,9 @@ import argparse
 import sys
 
 from sqlchat.bootstrap import setup_database
-from sqlchat.config import Settings, get_settings
-from sqlchat.db import Database, QueryResult
-from sqlchat.llm import build_chat_model
-from sqlchat.pipeline import TextToSql
-from sqlchat.schema import ALLOWED_TABLES
-from sqlchat.tools import SqlTools
+from sqlchat.config import get_settings
+from sqlchat.db import QueryResult
+from sqlchat.pipeline import build_pipeline
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -37,16 +34,10 @@ def main(argv: list[str] | None = None) -> int:
     return 0 if answer.status == "ok" else 1
 
 
-def build_pipeline(settings: Settings) -> TextToSql:
-    db = Database(settings.database_url, settings.statement_timeout_ms)
-    db.ensure_read_only_role(ALLOWED_TABLES)
-    return TextToSql(build_chat_model(settings), SqlTools(db, settings.max_rows))
-
-
 def _format_table(result: QueryResult, limit: int = 15) -> str:
     header = [c.name for c in result.columns]
     rows = [["NULL" if v is None else str(v) for v in row] for row in result.rows[:limit]]
-    widths = [max(len(h), *(len(r[i]) for r in rows)) for i, h in enumerate(header)]
+    widths = [max([len(h), *(len(r[i]) for r in rows)]) for i, h in enumerate(header)]
     lines = [
         "  ".join(h.ljust(w) for h, w in zip(header, widths, strict=True)),
         "  ".join("-" * w for w in widths),
