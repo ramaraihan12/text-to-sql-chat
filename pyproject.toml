@@ -1,0 +1,52 @@
+[project]
+name = "text-to-sql-chat"
+version = "0.1.0"
+description = "Ask a sales database questions in English or Bahasa Indonesia and get SQL, a table and a short answer back."
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.12"
+dependencies = [
+    "langchain>=1.4.6",
+    "langchain-ollama>=1.1.0",
+    "mcp>=2.3.0",
+    "pandas>=3.0.6",
+    "psycopg[binary]>=3.3.6",
+    "pydantic-settings>=2.16.0",
+    "sqlglot>=30.23.0",
+    "streamlit>=1.66.0",
+]
+
+[project.optional-dependencies]
+openai = ["langchain-openai>=1.7.2"]
+gemini = ["langchain-google-genai>=4.4.2"]
+anthropic = ["langchain-anthropic>=1.7.6"]
+
+[project.scripts]
+sqlchat = "sqlchat.cli:main"
+sqlchat-mcp = "sqlchat.mcp_server:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+    "ruff>=0.17.1",
+]
+
+[build-system]
+requires = ["hatchling>=1.32.4"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/sqlchat"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "SIM", "RUF"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "integration: needs a running Postgres (set TEST_ADMIN_DATABASE_URL and TEST_DATABASE_URL)",
+]
