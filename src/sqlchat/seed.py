@@ -59,16 +59,19 @@ PRODUCTS = [
     ("Biji Kopi Kintamani 250g", "beans", 98_000, 0.5, None),
 ]
 
-FIRST_NAMES = """
-    Andi Ayu Bayu Budi Citra Dewi Dimas Eka Fajar Fitri Galih Gita Hendra Indah Intan
-    Joko Kartika Lestari Made Nadia Nurul Oki Putri Rama Rizky Sari Siti Teguh Tri
-    Utami Wahyu Wayan Yoga Yuni Agus Bella Clara Dian Raka
-""".split()
-LAST_NAMES = """
-    Saputra Wijaya Pratama Santoso Hidayat Kusuma Siregar Nasution Lubis Wibowo Gunawan
-    Setiawan Halim Rahmawati Nugroho Purnomo Sihombing Tanjung Ginting Hakim Permana
-    Suryadi Utomo Daeng
-""".split()
+# fmt: off
+FIRST_NAMES = [
+    "Andi", "Ayu", "Bayu", "Budi", "Citra", "Dewi", "Dimas", "Eka", "Fajar", "Fitri",
+    "Galih", "Gita", "Hendra", "Indah", "Intan", "Joko", "Kartika", "Lestari", "Made",
+    "Nadia", "Nurul", "Oki", "Putri", "Rama", "Rizky", "Sari", "Siti", "Teguh", "Tri",
+    "Utami", "Wahyu", "Wayan", "Yoga", "Yuni", "Agus", "Bella", "Clara", "Dian", "Raka",
+]
+LAST_NAMES = [
+    "Saputra", "Wijaya", "Pratama", "Santoso", "Hidayat", "Kusuma", "Siregar", "Nasution",
+    "Lubis", "Wibowo", "Gunawan", "Setiawan", "Halim", "Rahmawati", "Nugroho", "Purnomo",
+    "Sihombing", "Tanjung", "Ginting", "Hakim", "Permana", "Suryadi", "Utomo", "Daeng",
+]
+# fmt: on
 
 CUSTOMER_COUNT = 700
 MEMBER_SHARE = 0.62
