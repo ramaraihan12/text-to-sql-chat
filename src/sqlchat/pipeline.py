@@ -1,0 +1,140 @@
+"""Question in, answer out: write SQL, check it, run it, explain the result."""
+
+import re
+from dataclasses import dataclass, field
+from datetime import date
+from typing import Literal
+
+import psycopg
+from langchain_core.language_models import BaseChatModel
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
+
+from sqlchat.charts import ChartSpec, suggest_chart
+from sqlchat.db import QueryResult
+from sqlchat.prompts import ANSWER_SYSTEM, ANSWER_USER, SQL_RETRY, SQL_SYSTEM
+from sqlchat.tools import SqlTools
+from sqlchat.validator import UnsafeQueryError
+
+# The first try plus one retry with the Postgres error fed back.
+MAX_ATTEMPTS = 2
+ROWS_FOR_SUMMARY = 20
+
+_THINK = re.compile(r"<think>.*?</think>", re.DOTALL | re.IGNORECASE)
+_FENCE = re.compile(r"```(?:sql|postgresql|postgres)?\s*(.*?)```", re.DOTALL | re.IGNORECASE)
+
+Status = Literal["ok", "blocked", "failed", "no_sql"]
+
+
+@dataclass
+class Attempt:
+    sql: str
+    error: str | None = None
+
+
+@dataclass
+class Answer:
+    question: str
+    status: Status
+    text: str
+    sql: str | None = None
+    result: QueryResult | None = None
+    chart: ChartSpec | None = None
+    attempts: list[Attempt] = field(default_factory=list)
+
+
+class TextToSql:
+    def __init__(self, model: BaseChatModel, tools: SqlTools) -> None:
+        self._model = model
+        self._tools = tools
+
+    def ask(self, question: str) -> Answer:
+        system = SQL_SYSTEM.format(schema=self._tools.schema_text, today=date.today().isoformat())
+        messages: list[BaseMessage] = [SystemMessage(system), HumanMessage(question)]
+        attempts: list[Attempt] = []
+
+        for _ in range(MAX_ATTEMPTS):
+            reply = _text(self._model.invoke(messages))
+            if reply.startswith("NO_SQL"):
+                reason = reply.removeprefix("NO_SQL").lstrip(" :")
+                return Answer(question, "no_sql", reason or "That isn't in the sales data.")
+
+            candidate = extract_sql(reply)
+            try:
+                safe, result = self._tools.run_sql(candidate)
+            except UnsafeQueryError as exc:
+                attempts.append(Attempt(candidate, str(exc)))
+                return Answer(
+                    question,
+                    "blocked",
+                    f"Blocked by the guardrails: {exc}",
+                    sql=candidate,
+                    attempts=attempts,
+                )
+            except psycopg.Error as exc:
+                # No SQLSTATE means the connection itself failed; the model can't fix that.
+                if exc.sqlstate is None:
+                    raise
+                error = _describe(exc)
+                attempts.append(Attempt(candidate, error))
+                messages += [AIMessage(reply), HumanMessage(SQL_RETRY.format(error=error))]
+                continue
+
+            attempts.append(Attempt(safe.sql))
+            return Answer(
+                question,
+                "ok",
+                self._summarize(question, result),
+                sql=safe.sql,
+                result=result,
+                chart=suggest_chart(result),
+                attempts=attempts,
+            )
+
+        last = attempts[-1]
+        return Answer(
+            question,
+            "failed",
+            f"The query still failed after a retry: {last.error}",
+            sql=last.sql,
+            attempts=attempts,
+        )
+
+    def _summarize(self, question: str, result: QueryResult) -> str:
+        shown = result.rows[:ROWS_FOR_SUMMARY]
+        header = " | ".join(c.name for c in result.columns)
+        lines = [header, *(" | ".join(_cell(v) for v in row) for row in shown)]
+        prompt = ANSWER_USER.format(
+            question=question,
+            row_count=len(result.rows),
+            shown=f", first {len(shown)} shown" if len(shown) < len(result.rows) else "",
+            table="\n".join(lines) if shown else "(no rows)",
+        )
+        reply = self._model.invoke([SystemMessage(ANSWER_SYSTEM), HumanMessage(prompt)])
+        return " ".join(_text(reply).split())
+
+
+def extract_sql(reply: str) -> str:
+    """Pull the statement out of a model reply, with or without a code fence."""
+    reply = _THINK.sub("", reply).strip()
+    match = _FENCE.search(reply)
+    return (match.group(1) if match else reply).strip()
+
+
+def _text(message: BaseMessage) -> str:
+    return _THINK.sub("", message.text).strip()
+
+
+def _describe(exc: psycopg.Error) -> str:
+    # The hint is often the useful part ("Perhaps you meant to reference the column ...").
+    primary = exc.diag.message_primary or _first_line(str(exc))
+    hint = exc.diag.message_hint
+    return f"{primary} HINT: {hint}" if hint else primary
+
+
+def _cell(value: object) -> str:
+    return "NULL" if value is None else str(value)
+
+
+def _first_line(text: str) -> str:
+    stripped = text.strip()
+    return stripped.splitlines()[0] if stripped else "unknown database error"
