@@ -4,8 +4,10 @@ Only a single SELECT (or UNION/INTERSECT/EXCEPT of SELECTs) over allowlisted tab
 through. The query that runs is the one sqlglot re-renders from the checked tree, not the raw
 text, so whatever was validated is exactly what reaches Postgres.
 
-This is the first layer, not the only one: the app also connects as a read-only role inside a
-read-only transaction with a statement timeout.
+For writes this is the first layer, not the only one: the app also connects as a read-only role
+inside a read-only transaction with a statement timeout. Reads are different. Every Postgres
+role can read catalog views like pg_roles and pg_settings, so keeping queries on the sales
+tables is up to this module.
 """
 
 import logging
@@ -139,7 +141,6 @@ def validate_sql(sql: str, *, allowed_tables: Iterable[str], max_rows: int) -> S
 
 
 def _check_tables(tree: exp.Expression, allowed: frozenset[str]) -> tuple[str, ...]:
-    cte_names = {cte.alias_or_name.lower() for cte in tree.find_all(exp.CTE)}
     used: list[str] = []
 
     for table in tree.find_all(exp.Table):
@@ -148,8 +149,7 @@ def _check_tables(tree: exp.Expression, allowed: frozenset[str]) -> tuple[str, .
             # FROM generate_series(...) and similar. Functions were already checked.
             continue
 
-        # Postgres folds unquoted identifiers to lower case; quoted ones are taken literally.
-        name = ident.this if ident.quoted else ident.this.lower()
+        name = _pg_name(ident)
         schema = table.db.lower()
         qualified = ".".join(p for p in (table.catalog, table.db, ident.this) if p)
 
@@ -157,7 +157,7 @@ def _check_tables(tree: exp.Expression, allowed: frozenset[str]) -> tuple[str, .
             raise UnsafeQueryError(
                 f"Table {qualified} is not available. Allowed tables: {_listing(allowed)}."
             )
-        if not schema and name in cte_names:
+        if not schema and name in _ctes_in_scope(table):
             continue
         if name not in allowed:
             raise UnsafeQueryError(
@@ -167,6 +167,38 @@ def _check_tables(tree: exp.Expression, allowed: frozenset[str]) -> tuple[str, .
             used.append(name)
 
     return tuple(used)
+
+
+def _ctes_in_scope(table: exp.Table) -> set[str]:
+    """CTE names this table reference can resolve to, following Postgres' scoping rules.
+
+    A CTE is visible in the query that owns its WITH (subqueries included) and in the CTEs after
+    it in the same list. Under WITH RECURSIVE every CTE in the list sees all of them, itself too.
+    A CTE defined anywhere else doesn't count: Postgres resolves the name to a real relation,
+    which for a name like pg_roles is a catalog view every role can read.
+    """
+    names: set[str] = set()
+    child: exp.Expression = table
+    parent = table.parent
+    while parent is not None:
+        if isinstance(parent, exp.With):
+            ctes = parent.expressions
+            if not parent.args.get("recursive"):
+                ctes = ctes[: next((i for i, cte in enumerate(ctes) if cte is child), 0)]
+            names.update(_cte_name(cte) for cte in ctes)
+        elif isinstance(parent, exp.Query) and not isinstance(child, exp.With):
+            names.update(_cte_name(cte) for cte in parent.ctes)
+        child, parent = parent, parent.parent
+    return names
+
+
+def _cte_name(cte: exp.CTE) -> str:
+    return _pg_name(cte.args["alias"].this)
+
+
+def _pg_name(ident: exp.Identifier) -> str:
+    # Postgres folds unquoted identifiers to lower case; quoted ones are taken literally.
+    return ident.this if ident.quoted else ident.this.lower()
 
 
 def _apply_row_limit(query: exp.Expression, max_rows: int) -> None:

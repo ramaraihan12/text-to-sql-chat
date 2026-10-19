@@ -137,6 +137,58 @@ def test_schema_qualified_cte_name_is_still_checked() -> None:
         check("WITH secret AS (SELECT 1) SELECT * FROM public.secret")
 
 
+@pytest.mark.parametrize(
+    ("sql", "tables"),
+    [
+        ("WITH a AS (SELECT * FROM stores), b AS (SELECT * FROM a) SELECT * FROM b", ("stores",)),
+        (
+            "WITH x AS (SELECT id FROM stores) "
+            "SELECT * FROM orders WHERE store_id IN (SELECT id FROM x)",
+            ("orders", "stores"),
+        ),
+        ("SELECT * FROM (WITH x AS (SELECT * FROM orders) SELECT * FROM x) t", ("orders",)),
+        (
+            "WITH a AS (SELECT name FROM stores) (SELECT * FROM a) UNION (SELECT * FROM a)",
+            ("stores",),
+        ),
+        (
+            "WITH RECURSIVE b AS (SELECT * FROM a), a AS (SELECT id FROM stores) SELECT * FROM b",
+            ("stores",),
+        ),
+        ('WITH "Top" AS (SELECT * FROM products) SELECT * FROM "Top"', ("products",)),
+        # Shadowing a catalog name is fine while the CTE is in scope; Postgres reads the CTE.
+        ("WITH pg_roles AS (SELECT * FROM stores) SELECT * FROM pg_roles", ("stores",)),
+    ],
+)
+def test_cte_references_in_scope_are_accepted(sql: str, tables: tuple[str, ...]) -> None:
+    assert check(sql).tables == tables
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        # A CTE inside a subquery doesn't hide the catalog view of the same name outside it.
+        "SELECT * FROM (WITH pg_roles AS (SELECT 1 AS x) SELECT * FROM pg_roles) a "
+        "CROSS JOIN pg_roles",
+        "SELECT * FROM (WITH pg_settings AS (SELECT 1 AS x) SELECT * FROM pg_settings) a "
+        "CROSS JOIN pg_settings",
+        "SELECT * FROM (WITH pg_database AS (SELECT 1 AS x) SELECT * FROM pg_database) a "
+        "CROSS JOIN pg_database",
+        "SELECT * FROM (WITH pg_stat_activity AS (SELECT 1 AS x) SELECT * FROM pg_stat_activity) a "
+        "CROSS JOIN pg_stat_activity",
+        "SELECT (WITH pg_roles AS (SELECT 1) SELECT 1 FROM pg_roles) AS x, * FROM pg_roles",
+        # Without RECURSIVE a CTE can't see itself or the ones after it.
+        "WITH pg_roles AS (SELECT * FROM pg_roles) SELECT * FROM pg_roles",
+        "WITH b AS (SELECT * FROM pg_roles), pg_roles AS (SELECT 1) SELECT * FROM b",
+        # A quoted name keeps its case, so this CTE doesn't shadow pg_roles.
+        'WITH "PG_ROLES" AS (SELECT 1) SELECT * FROM pg_roles',
+    ],
+)
+def test_cte_names_only_count_where_postgres_can_see_them(sql: str) -> None:
+    with pytest.raises(UnsafeQueryError, match=r"Table pg_\w+ is not available"):
+        check(sql)
+
+
 def test_reports_tables_used_once_each() -> None:
     result = check(
         "SELECT * FROM orders o JOIN order_items i ON i.order_id = o.id "
