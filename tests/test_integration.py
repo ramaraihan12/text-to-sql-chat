@@ -12,6 +12,7 @@ from sqlchat.pipeline import TextToSql
 from sqlchat.schema import ALLOWED_TABLES, load_schema
 from sqlchat.seed import generate
 from sqlchat.tools import SqlTools
+from sqlchat.validator import UnsafeQueryError
 from tests.fakes import scripted_model
 
 ADMIN_URL = os.environ.get("TEST_ADMIN_DATABASE_URL")
@@ -77,15 +78,34 @@ def test_role_cannot_write_even_without_the_validator(reader: Database, statemen
         reader.query(statement)
 
 
-def test_role_cannot_read_outside_the_sales_tables(reader: Database) -> None:
-    with pytest.raises(psycopg.errors.InsufficientPrivilege):
-        reader.query("SELECT * FROM pg_authid")
+def test_role_cannot_read_other_tables_in_the_schema(counts: dict[str, int]) -> None:
+    assert ADMIN_URL and READER_URL
+    with psycopg.connect(ADMIN_URL, autocommit=True) as admin:
+        admin.execute("CREATE TABLE IF NOT EXISTS staff_salaries (name text, salary_idr bigint)")
+        try:
+            # Run setup again with the extra table in place, so a too-broad grant would show.
+            setup_database(ADMIN_URL, READER_URL, statement_timeout_ms=3000)
+            with pytest.raises(psycopg.errors.InsufficientPrivilege):
+                Database(READER_URL).query("SELECT * FROM staff_salaries")
+        finally:
+            admin.execute("DROP TABLE staff_salaries")
 
 
 def test_statement_timeout_stops_slow_queries(counts: dict[str, int]) -> None:
     assert READER_URL
     with pytest.raises(psycopg.errors.QueryCanceled):
         Database(READER_URL, statement_timeout_ms=200).query("SELECT pg_sleep(2)")
+
+
+def test_catalog_views_are_readable_so_the_validator_has_to_stop_them(reader: Database) -> None:
+    # Postgres lets every role read pg_roles, pg_settings and friends. The grants don't help.
+    assert reader.query("SELECT count(*) FROM pg_roles").rows[0][0] > 0
+
+    with pytest.raises(UnsafeQueryError, match="pg_roles"):
+        SqlTools(reader, max_rows=50).run_sql(
+            "SELECT * FROM (WITH pg_roles AS (SELECT 1 AS x) SELECT * FROM pg_roles) a "
+            "CROSS JOIN pg_roles"
+        )
 
 
 def test_schema_context_has_notes_and_samples(reader: Database) -> None:
