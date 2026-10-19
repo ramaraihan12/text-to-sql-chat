@@ -41,24 +41,46 @@ _WRITE_NODES: tuple[type[exp.Expression], ...] = (
     exp.Analyze,
 )
 
-# Anything that sleeps, touches files, opens connections, changes settings or runs a query
-# hidden inside a string literal.
-_BLOCKED_FUNCTION_PREFIXES = ("pg_", "lo_", "dblink")
-_BLOCKED_FUNCTIONS = frozenset(
+# Functions sqlglot has a class for are the standard aggregate, window, date, string and math
+# ones. Postgres-only functions come back as exp.Anonymous and must be on this list, so pg_sleep,
+# pg_read_file, current_setting, dblink, query_to_xml, ts_stat and whatever else sleeps, reads
+# files or runs a query from a string literal are rejected without having to name them all.
+_ALLOWED_PG_FUNCTIONS = frozenset(
     {
-        "current_setting",
-        "set_config",
-        "nextval",
-        "setval",
-        "txid_current",
-        "query_to_xml",
-        "query_to_xmlschema",
-        "query_to_xml_and_xmlschema",
-        "cursor_to_xml",
-        "table_to_xml",
-        "table_to_xml_and_xmlschema",
-        "schema_to_xml",
-        "database_to_xml",
+        # dates and times
+        "age",
+        "clock_timestamp",
+        "date_subtract",
+        "isfinite",
+        "make_date",
+        "make_timestamptz",
+        "statement_timestamp",
+        "timezone",
+        "transaction_timestamp",
+        # numbers and text
+        "gcd",
+        "lcm",
+        "num_nonnulls",
+        "num_nulls",
+        "octet_length",
+        "regexp_matches",
+        "regexp_split_to_array",
+        "regexp_split_to_table",
+        "scale",
+        "trim_scale",
+        # aggregates, arrays and json
+        "cardinality",
+        "every",
+        "json_array_elements",
+        "json_build_array",
+        "json_build_object",
+        "jsonb_agg",
+        "jsonb_array_elements",
+        "jsonb_build_array",
+        "jsonb_build_object",
+        "row_to_json",
+        "to_json",
+        "to_jsonb",
     }
 )
 
@@ -106,9 +128,9 @@ def validate_sql(sql: str, *, allowed_tables: Iterable[str], max_rows: int) -> S
     if tree.find(exp.Lock) is not None:
         raise UnsafeQueryError("Row locking (FOR UPDATE / FOR SHARE) is not allowed.")
 
-    for func in tree.find_all(exp.Func):
-        name = _function_name(func)
-        if name in _BLOCKED_FUNCTIONS or name.startswith(_BLOCKED_FUNCTION_PREFIXES):
+    for func in tree.find_all(exp.Anonymous):
+        name = func.name.lower()
+        if name not in _ALLOWED_PG_FUNCTIONS:
             raise UnsafeQueryError(f"Function {name}() is not allowed.")
 
     tables = _check_tables(tree, frozenset(t.lower() for t in allowed_tables))
@@ -168,12 +190,6 @@ def _int_literal(node: exp.Expression | None) -> int | None:
         except ValueError:
             return None
     return None
-
-
-def _function_name(func: exp.Func) -> str:
-    if isinstance(func, exp.Anonymous):
-        return func.name.lower()
-    return func.sql_name().lower()
 
 
 def _kind(node: exp.Expression) -> str:
