@@ -86,6 +86,32 @@ _ALLOWED_PG_FUNCTIONS = frozenset(
     }
 )
 
+# sqlglot has classes for these, so the function allowlist above never sees them.
+_SERVER_INFO_NODES: tuple[type[exp.Expression], ...] = (
+    exp.CurrentCatalog,
+    exp.CurrentDatabase,
+    exp.CurrentSchema,
+    exp.CurrentUser,
+    exp.CurrentVersion,
+    exp.SessionUser,
+)
+
+# A cast can be a catalog read: 10::regrole is a role name, and over generate_series the reg*
+# types list every role and relation without naming a catalog table. So only plain data types
+# are allowed. pg_catalog.regclass and other schema-qualified names parse as USERDEFINED.
+_ALLOWED_CAST_TYPES = (
+    exp.DataType.NUMERIC_TYPES
+    | exp.DataType.TEXT_TYPES
+    | exp.DataType.TEMPORAL_TYPES
+    | {
+        exp.DataType.Type.ARRAY,
+        exp.DataType.Type.BOOLEAN,
+        exp.DataType.Type.INTERVAL,
+        exp.DataType.Type.JSON,
+        exp.DataType.Type.JSONB,
+    }
+)
+
 
 class UnsafeQueryError(ValueError):
     """The statement was rejected by the guardrails. The message says why."""
@@ -134,6 +160,14 @@ def validate_sql(sql: str, *, allowed_tables: Iterable[str], max_rows: int) -> S
         name = func.name.lower()
         if name not in _ALLOWED_PG_FUNCTIONS:
             raise UnsafeQueryError(f"Function {name}() is not allowed.")
+
+    server_info = tree.find(*_SERVER_INFO_NODES)
+    if server_info is not None:
+        raise UnsafeQueryError(f"Server details are not available (found {_kind(server_info)}).")
+
+    for data_type in tree.find_all(exp.DataType):
+        if data_type.this not in _ALLOWED_CAST_TYPES:
+            raise UnsafeQueryError(f"Type {data_type.sql(dialect='postgres')} is not allowed.")
 
     tables = _check_tables(tree, frozenset(t.lower() for t in allowed_tables))
     _apply_row_limit(tree, max_rows)
