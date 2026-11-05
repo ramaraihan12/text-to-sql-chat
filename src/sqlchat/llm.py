@@ -13,4 +13,7 @@ def build_chat_model(settings: Settings) -> BaseChatModel:
         # Qwen 3.x and similar models think out loud by default. For short SQL that only
         # costs time on a small GPU, so it's switched off.
         kwargs |= {"base_url": settings.ollama_base_url, "reasoning": False}
+    else:
+        # The client defaults allow a long hang and six retries, all on a metered API.
+        kwargs |= {"timeout": 30, "max_retries": 2}
     return init_chat_model(settings.llm_model, model_provider=settings.llm_provider, **kwargs)
