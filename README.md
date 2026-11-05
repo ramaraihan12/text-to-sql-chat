@@ -4,6 +4,8 @@
 
 Ask a sales database questions in plain English or Bahasa Indonesia and get back the SQL, the result table, a one-line answer and a chart when the result has a shape worth plotting. The same guarded query tools are also an MCP server, so Claude Desktop or Cursor can use them too.
 
+**Live demo: [text-to-sql-chat.streamlit.app](https://text-to-sql-chat.streamlit.app)**, no login needed. It runs on Streamlit Community Cloud with Neon Postgres and Gemini. Streamlit puts the app to sleep after 12 hours without traffic, so you may need to click the button to wake it and wait a minute. Questions are capped per visit and per day to stay inside the free Gemini quota.
+
 The data is Kopi Lereng, a made-up coffee chain: 14 stores in 10 Indonesian cities, 24 products, 700 loyalty members, about 3,700 orders and 6,800 order lines from January 2025 to September 2026. It's generated from a fixed seed, so every install has the same rows.
 
 ![Streamlit app answering "Revenue per city in September 2026"](docs/screenshot.png)
@@ -58,7 +60,7 @@ Produk yang paling laris di Bandung tahun 2026 adalah Es Kopi Susu Gula Aren den
 
 ## Stack
 
-Python 3.12, uv, LangChain (`init_chat_model`, Ollama by default), psycopg 3, sqlglot, Streamlit, MCP Python SDK 2 (`MCPServer`, formerly FastMCP), PostgreSQL 17, pytest, ruff.
+Python 3.12, uv, LangChain (`init_chat_model`, Ollama by default, Gemini on the live demo), psycopg 3, sqlglot, Streamlit, MCP Python SDK 2 (`MCPServer`, formerly FastMCP), PostgreSQL 17, pytest, ruff.
 
 ## Run it
 
