@@ -57,7 +57,7 @@ CREATE INDEX orders_store_id_idx ON orders (store_id);
 CREATE INDEX orders_customer_id_idx ON orders (customer_id);
 CREATE INDEX orders_ordered_at_idx ON orders (ordered_at);
 
-COMMENT ON TABLE orders IS 'One row per receipt. Sales figures should only count status = ''completed''. Data runs from 2025-01-01 to 2026-09-30.';
+COMMENT ON TABLE orders IS 'One row per receipt, so one order is one transaction (transaksi). For an average transaction value, total each order first and then average those totals, never AVG over order_items lines. Sales figures should only count status = ''completed''. Data runs from 2025-01-01 to 2026-09-30.';
 COMMENT ON COLUMN orders.store_id IS 'References stores.id.';
 COMMENT ON COLUMN orders.customer_id IS 'References customers.id. NULL for walk-in buyers who are not loyalty members.';
 COMMENT ON COLUMN orders.ordered_at IS 'When the order was paid. Sessions use the Asia/Jakarta (WIB) time zone.';
