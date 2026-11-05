@@ -10,7 +10,7 @@ from sqlchat.pipeline import build_pipeline
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="sqlchat", description="Text-to-SQL over a sales DB.")
     commands = parser.add_subparsers(dest="command", required=True)
-    commands.add_parser("setup", help="create tables, load seed data and the read-only role")
+    commands.add_parser("setup", help="create tables, load seed data and the app's roles")
     ask = commands.add_parser("ask", help="ask one question and print the SQL and answer")
     ask.add_argument("question")
     args = parser.parse_args(argv)
@@ -18,11 +18,14 @@ def main(argv: list[str] | None = None) -> int:
     settings = get_settings()
     if args.command == "setup":
         counts = setup_database(
-            settings.admin_database_url, settings.database_url, settings.statement_timeout_ms
+            settings.admin_database_url,
+            settings.database_url,
+            settings.usage_database_url,
+            settings.statement_timeout_ms,
         )
         for table, count in counts.items():
             print(f"{table:<12} {count:>6} rows")
-        print("read-only role ready")
+        print("read-only and usage roles ready")
         return 0
 
     answer = build_pipeline(settings).ask(args.question)

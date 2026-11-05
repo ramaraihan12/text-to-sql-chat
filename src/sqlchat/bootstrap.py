@@ -1,4 +1,4 @@
-"""One-off database setup: tables, seed rows and the read-only role the app connects as."""
+"""One-off database setup: tables, seed rows, the read-only role and the usage counter role."""
 
 from importlib.resources import files
 
@@ -26,11 +26,13 @@ _COLUMNS = {
 }
 
 
-def setup_database(admin_url: str, reader_url: str, statement_timeout_ms: int) -> dict[str, int]:
-    """Recreate the schema, load the seed data and (re)create the reader role.
+def setup_database(
+    admin_url: str, reader_url: str, usage_url: str, statement_timeout_ms: int
+) -> dict[str, int]:
+    """Recreate the schema, load the seed data and (re)create the reader and counter roles.
 
-    Safe to run more than once: tables are dropped and rebuilt with the same rows.
-    Returns the row count per table.
+    Safe to run more than once: sales tables are dropped and rebuilt with the same rows, and
+    the daily_usage counter is left alone. Returns the row count per table.
     """
     reader = conninfo_to_dict(reader_url)
     admin = conninfo_to_dict(admin_url)
@@ -43,11 +45,19 @@ def setup_database(admin_url: str, reader_url: str, statement_timeout_ms: int) -
             "The app must connect as its own read-only role."
         )
 
+    usage = conninfo_to_dict(usage_url)
+    usage_role, usage_password = usage.get("user"), usage.get("password")
+    if not usage_role or not usage_password:
+        raise ValueError("USAGE_DATABASE_URL needs a user name and password for the counter role.")
+    if usage_role in (role, admin.get("user")):
+        raise ValueError("USAGE_DATABASE_URL must use its own role, not the reader or the owner.")
+
     data = generate()
     with psycopg.connect(admin_url) as conn:
         conn.execute(files("sqlchat").joinpath("sql/schema.sql").read_text(encoding="utf-8"))
         _load(conn, data)
         _create_reader_role(conn, str(role), str(password), statement_timeout_ms)
+        _create_usage_role(conn, str(usage_role), str(usage_password))
 
     return {table: len(getattr(data, table)) for table in _COLUMNS}
 
@@ -64,19 +74,23 @@ def _load(conn: psycopg.Connection, data: SeedData) -> None:
         cur.execute("ANALYZE")
 
 
-def _create_reader_role(
-    conn: psycopg.Connection, role: str, password: str, statement_timeout_ms: int
-) -> None:
-    db_name = conn.info.dbname
+def _ensure_login_role(conn: psycopg.Connection, role: str, password: str) -> None:
     exists = conn.execute("SELECT 1 FROM pg_roles WHERE rolname = %s", (role,)).fetchone()
-    ident = sql.Identifier(role)
-    db = sql.Identifier(db_name)
-
     conn.execute(
         sql.SQL(
             "{} ROLE {} WITH LOGIN PASSWORD {} NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT"
-        ).format(sql.SQL("ALTER" if exists else "CREATE"), ident, sql.Literal(password))
+        ).format(
+            sql.SQL("ALTER" if exists else "CREATE"), sql.Identifier(role), sql.Literal(password)
+        )
     )
+
+
+def _create_reader_role(
+    conn: psycopg.Connection, role: str, password: str, statement_timeout_ms: int
+) -> None:
+    ident = sql.Identifier(role)
+    db = sql.Identifier(conn.info.dbname)
+    _ensure_login_role(conn, role, password)
 
     # Belt and braces: even if a query slipped past the validator, sessions for this role
     # start read-only and get cut off after the timeout.
@@ -98,5 +112,20 @@ def _create_reader_role(
         sql.SQL("GRANT CONNECT ON DATABASE {} TO {}").format(db, ident),
         sql.SQL("GRANT USAGE ON SCHEMA public TO {}").format(ident),
         sql.SQL("GRANT SELECT ON {} TO {}").format(tables, ident),
+    ):
+        conn.execute(statement)
+
+
+def _create_usage_role(conn: psycopg.Connection, role: str, password: str) -> None:
+    """The read-only role can't count questions, so this one does and can do nothing else."""
+    ident = sql.Identifier(role)
+    db = sql.Identifier(conn.info.dbname)
+    _ensure_login_role(conn, role, password)
+
+    for statement in (
+        sql.SQL("REVOKE ALL ON ALL TABLES IN SCHEMA public FROM {}").format(ident),
+        sql.SQL("GRANT CONNECT ON DATABASE {} TO {}").format(db, ident),
+        sql.SQL("GRANT USAGE ON SCHEMA public TO {}").format(ident),
+        sql.SQL("GRANT SELECT, INSERT, UPDATE ON daily_usage TO {}").format(ident),
     ):
         conn.execute(statement)

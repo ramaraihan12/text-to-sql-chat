@@ -26,6 +26,7 @@ jobs:
     env:
       TEST_ADMIN_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/text_to_sql
       TEST_DATABASE_URL: postgresql://sales_reader:sales_reader@localhost:5432/text_to_sql
+      TEST_USAGE_DATABASE_URL: postgresql://usage_counter:usage_counter@localhost:5432/text_to_sql
 
     steps:
       - uses: actions/checkout@v7

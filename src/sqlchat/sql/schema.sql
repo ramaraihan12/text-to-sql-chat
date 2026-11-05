@@ -81,3 +81,10 @@ COMMENT ON COLUMN order_items.order_id IS 'References orders.id.';
 COMMENT ON COLUMN order_items.product_id IS 'References products.id.';
 COMMENT ON COLUMN order_items.quantity IS 'Number of units on this line.';
 COMMENT ON COLUMN order_items.unit_price_idr IS 'Price per unit in Rupiah at the time of sale.';
+
+-- Not sales data and not visible to the model or the read-only role. It stays out of the DROP
+-- at the top so running setup again can't reset the daily cap.
+CREATE TABLE IF NOT EXISTS daily_usage (
+    day        date PRIMARY KEY,
+    questions  integer NOT NULL CHECK (questions >= 0)
+);

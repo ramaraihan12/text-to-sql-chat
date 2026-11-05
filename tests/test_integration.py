@@ -1,13 +1,16 @@
-"""Runs against a real Postgres. Skipped unless TEST_ADMIN_DATABASE_URL and TEST_DATABASE_URL
-are set; the setup step rebuilds the tables in that database, so point it at a scratch DB."""
+"""Runs against a real Postgres. Skipped unless TEST_ADMIN_DATABASE_URL, TEST_DATABASE_URL and
+TEST_USAGE_DATABASE_URL are set; the setup step rebuilds the tables in that database, so point
+it at a scratch DB."""
 
 import os
+from concurrent.futures import ThreadPoolExecutor
 
 import psycopg
 import pytest
 
 from sqlchat.bootstrap import setup_database
 from sqlchat.db import Database
+from sqlchat.limits import DailyQuota
 from sqlchat.pipeline import TextToSql
 from sqlchat.schema import ALLOWED_TABLES, load_schema
 from sqlchat.seed import generate
@@ -17,20 +20,21 @@ from tests.fakes import scripted_model
 
 ADMIN_URL = os.environ.get("TEST_ADMIN_DATABASE_URL")
 READER_URL = os.environ.get("TEST_DATABASE_URL")
+USAGE_URL = os.environ.get("TEST_USAGE_DATABASE_URL")
 
 pytestmark = [
     pytest.mark.integration,
     pytest.mark.skipif(
-        not (ADMIN_URL and READER_URL),
-        reason="set TEST_ADMIN_DATABASE_URL and TEST_DATABASE_URL to run",
+        not (ADMIN_URL and READER_URL and USAGE_URL),
+        reason="set TEST_ADMIN_DATABASE_URL, TEST_DATABASE_URL and TEST_USAGE_DATABASE_URL to run",
     ),
 ]
 
 
 @pytest.fixture(scope="module")
 def counts() -> dict[str, int]:
-    assert ADMIN_URL and READER_URL
-    return setup_database(ADMIN_URL, READER_URL, statement_timeout_ms=3000)
+    assert ADMIN_URL and READER_URL and USAGE_URL
+    return setup_database(ADMIN_URL, READER_URL, USAGE_URL, statement_timeout_ms=3000)
 
 
 @pytest.fixture
@@ -47,8 +51,8 @@ def test_seed_lands_in_postgres(counts: dict[str, int], reader: Database) -> Non
 
 
 def test_setup_can_run_twice(counts: dict[str, int]) -> None:
-    assert ADMIN_URL and READER_URL
-    assert setup_database(ADMIN_URL, READER_URL, statement_timeout_ms=3000) == counts
+    assert ADMIN_URL and READER_URL and USAGE_URL
+    assert setup_database(ADMIN_URL, READER_URL, USAGE_URL, statement_timeout_ms=3000) == counts
 
 
 def test_reader_role_passes_the_startup_check(reader: Database) -> None:
@@ -79,16 +83,66 @@ def test_role_cannot_write_even_without_the_validator(reader: Database, statemen
 
 
 def test_role_cannot_read_other_tables_in_the_schema(counts: dict[str, int]) -> None:
-    assert ADMIN_URL and READER_URL
+    assert ADMIN_URL and READER_URL and USAGE_URL
     with psycopg.connect(ADMIN_URL, autocommit=True) as admin:
         admin.execute("CREATE TABLE IF NOT EXISTS staff_salaries (name text, salary_idr bigint)")
         try:
             # Run setup again with the extra table in place, so a too-broad grant would show.
-            setup_database(ADMIN_URL, READER_URL, statement_timeout_ms=3000)
+            setup_database(ADMIN_URL, READER_URL, USAGE_URL, statement_timeout_ms=3000)
             with pytest.raises(psycopg.errors.InsufficientPrivilege):
                 Database(READER_URL).query("SELECT * FROM staff_salaries")
         finally:
             admin.execute("DROP TABLE staff_salaries")
+
+
+@pytest.fixture
+def fresh_counter(counts: dict[str, int]) -> None:
+    assert ADMIN_URL
+    with psycopg.connect(ADMIN_URL, autocommit=True) as admin:
+        admin.execute("TRUNCATE daily_usage")
+
+
+def test_daily_cap_stops_at_the_limit(fresh_counter: None) -> None:
+    assert USAGE_URL
+    quota = DailyQuota(USAGE_URL, limit=2)
+    assert [quota.claim() for _ in range(4)] == [True, True, False, False]
+
+
+def test_daily_cap_holds_when_sessions_race(fresh_counter: None) -> None:
+    assert USAGE_URL
+    quota = DailyQuota(USAGE_URL, limit=5)
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        results = list(pool.map(lambda _: quota.claim(), range(16)))
+    assert results.count(True) == 5
+
+
+def test_running_setup_again_does_not_reset_the_counter(fresh_counter: None) -> None:
+    assert ADMIN_URL and READER_URL and USAGE_URL
+    quota = DailyQuota(USAGE_URL, limit=1)
+    assert quota.claim()
+    setup_database(ADMIN_URL, READER_URL, USAGE_URL, statement_timeout_ms=3000)
+    assert not quota.claim()
+
+
+@pytest.mark.parametrize(
+    "statement",
+    [
+        "SELECT * FROM orders",
+        "UPDATE products SET price_idr = 1",
+        "DELETE FROM daily_usage",
+        "TRUNCATE daily_usage",
+        "CREATE TABLE sneaky (id int)",
+    ],
+)
+def test_usage_role_can_only_count(counts: dict[str, int], statement: str) -> None:
+    assert USAGE_URL
+    with psycopg.connect(USAGE_URL) as conn, pytest.raises(psycopg.errors.InsufficientPrivilege):
+        conn.execute(statement)
+
+
+def test_reader_cannot_see_the_counter(reader: Database) -> None:
+    with pytest.raises(psycopg.errors.InsufficientPrivilege):
+        reader.query("SELECT * FROM daily_usage")
 
 
 def test_statement_timeout_stops_slow_queries(counts: dict[str, int]) -> None:
