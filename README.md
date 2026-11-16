@@ -4,7 +4,7 @@
 
 Ask a sales database questions in plain English or Bahasa Indonesia and get back the SQL, the result table, a one-line answer and a chart when the result has a shape worth plotting. The same guarded query tools are also an MCP server, so Claude Desktop or Cursor can use them too.
 
-**Live demo: [text-to-sql-chat.streamlit.app](https://text-to-sql-chat.streamlit.app)**, no login needed. It runs on Streamlit Community Cloud with Neon Postgres and Gemini. Streamlit puts the app to sleep after 12 hours without traffic, so you may need to click the button to wake it and wait a minute. Questions are capped per visit and per day to stay inside the free Gemini quota.
+**Live demo: [text-to-sql-chat.streamlit.app](https://text-to-sql-chat.streamlit.app)**, no login needed. It runs on Streamlit Community Cloud with Neon Postgres and Llama 3.3 70B on Cloudflare Workers AI. Streamlit puts the app to sleep after 12 hours without traffic, so you may need to click the button to wake it and wait a minute. Questions are capped per visit and to 40 a day across everyone, which keeps it inside the free Workers AI allowance. The day resets at midnight UTC.
 
 The data is Kopi Lereng, a made-up coffee chain: 14 stores in 10 Indonesian cities, 24 products, 700 loyalty members, about 3,700 orders and 6,800 order lines from January 2025 to September 2026. It's generated from a fixed seed, so every install has the same rows.
 
@@ -60,7 +60,7 @@ Produk yang paling laris di Bandung tahun 2026 adalah Es Kopi Susu Gula Aren den
 
 ## Stack
 
-Python 3.12, uv, LangChain (`init_chat_model`, Ollama by default, Gemini on the live demo), psycopg 3, sqlglot, Streamlit, MCP Python SDK 2 (`MCPServer`, formerly FastMCP), PostgreSQL 17, pytest, ruff.
+Python 3.12, uv, LangChain (`init_chat_model`, Ollama by default, Llama 3.3 on Cloudflare Workers AI on the live demo), psycopg 3, sqlglot, Streamlit, MCP Python SDK 2 (`MCPServer`, formerly FastMCP), PostgreSQL 17, pytest, ruff.
 
 ## Run it
 
@@ -79,7 +79,7 @@ uv run streamlit run streamlit_app.py
 
 `sqlchat setup` creates the tables, loads the seed data and creates the read-only `sales_reader` role and the `usage_counter` role. It's safe to run again, and it leaves the daily counter alone. Settings live in `.env` (see `.env.example`). On my laptop I use a smaller quant, `LLM_MODEL=qwen3.5-9b:iq4xs`, because it fits a 6 GB GPU.
 
-Other providers work through the same config. Gemini is installed already: set `LLM_PROVIDER=google_genai`, a Gemini model name in `LLM_MODEL` and `GOOGLE_API_KEY`. For OpenAI: `uv sync --extra openai`, then set `LLM_PROVIDER=openai`, an OpenAI model name in `LLM_MODEL` and `OPENAI_API_KEY`. The `anthropic` extra works the same way.
+Other providers work through the same config. The live demo uses Cloudflare Workers AI, which has a free daily allowance: set `LLM_PROVIDER=cloudflare`, `LLM_MODEL=@cf/meta/llama-3.3-70b-instruct-fp8-fast`, `CF_ACCOUNT_ID` and a `CF_API_TOKEN` with the Workers AI permission. It goes through the OpenAI-compatible endpoint, so any Workers AI chat model that follows instructions should work. Gemini is installed too: set `LLM_PROVIDER=google_genai`, a Gemini model name in `LLM_MODEL` and `GOOGLE_API_KEY` (the free Gemini API tier isn't offered to users in the EEA, Switzerland or the UK, which is why the public demo doesn't use it). OpenAI works the same way with `LLM_PROVIDER=openai` and `OPENAI_API_KEY`. For Anthropic: `uv sync --extra anthropic`, then `LLM_PROVIDER=anthropic` and `ANTHROPIC_API_KEY`.
 
 One question without the UI:
 
@@ -129,9 +129,12 @@ uv run pytest -m integration
 
 - A parser allowlist is easy to get subtly wrong. My first version collected CTE names from the whole query, so `WITH pg_roles AS (...)` inside a subquery let the real `pg_roles` through outside it. That probe and a few cousins are test cases now. Casts got me the same way: `g::regrole` over `generate_series` listed every role on the server without naming a catalog table. For writes the role and the read-only transaction are the real wall; for catalog reads the validator is all there is.
 - With a 9B model on a 6 GB RTX 3060 a question takes about 5 to 10 seconds once the model is loaded. The first one after a model swap is slower.
+- On Cloudflare a question takes 3 to 6 seconds and costs roughly 70 to 150 Workers AI neurons (two model calls, three when a query is retried), so the 10,000 a day free allowance covers well over the 40-question cap. The cap leaves room for another demo on the same account.
 - A 9B model handles the everyday questions here, but it's still a 9B model. Read the SQL before you trust a number; it's always one click away.
 - Next I'd add a small eval set of questions with known answers, so a prompt or model change shows up as a number instead of a feeling.
 
 ## License
 
 MIT
+
+Built with Llama. The live demo runs Llama 3.3 under the [Llama 3.3 Community License](https://www.llama.com/llama3_3/license/).

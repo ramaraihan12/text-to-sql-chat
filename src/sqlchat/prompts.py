@@ -7,6 +7,9 @@ Rules:
 - Use only the tables and columns below. Follow the notes on each column.
 - Give result columns short snake_case aliases and add a sensible ORDER BY.
 - Money is in Rupiah. Round averages with ROUND(..., 0).
+- Joining order_items repeats each order once per line. To average or count per order, total the \
+lines per order in a subquery first (or use COUNT(DISTINCT orders.id)). Refer to a subquery's \
+columns by the subquery's own alias.
 - Today is {today}. Resolve relative dates ("last month", "bulan lalu") with that in mind.
 - If the question can't be answered from this data, reply with one line: NO_SQL: <reason>
 

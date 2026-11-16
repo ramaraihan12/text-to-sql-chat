@@ -10,10 +10,10 @@ import psycopg
 from sqlchat.config import Settings
 
 # One statement, so two sessions racing for the last slot can't both get it. The day rolls over
-# at midnight Pacific because that's when Gemini's daily quota resets.
+# at midnight UTC because that's when Cloudflare's free Workers AI allowance resets.
 _CLAIM = """
     INSERT INTO daily_usage AS u (day, questions)
-    VALUES ((now() AT TIME ZONE 'America/Los_Angeles')::date, 1)
+    VALUES ((now() AT TIME ZONE 'UTC')::date, 1)
     ON CONFLICT (day) DO UPDATE SET questions = u.questions + 1
     WHERE u.questions < %s
     RETURNING u.questions

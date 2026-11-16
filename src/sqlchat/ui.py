@@ -114,7 +114,7 @@ def _refusal(question: str, settings: Settings) -> str | None:
         log.exception("usage counter failed")
         return "The demo can't check its daily limit right now. Please try again in a minute."
     if not allowed:
-        return "The demo has used all of today's questions. It resets at midnight Pacific time."
+        return "The demo has used all of today's questions. It resets at midnight UTC."
 
     st.session_state.asked = asked + 1
     return None
@@ -139,6 +139,8 @@ def _sidebar(settings: Settings) -> None:
             f"{settings.daily_question_limit} a day across everyone"
         )
         st.caption(f"Model: `{settings.llm_provider}` / `{settings.llm_model}`")
+        if settings.llm_provider == "cloudflare" and "llama" in settings.llm_model.lower():
+            st.caption("Built with Llama")
         if st.button("Clear chat", icon=":material/delete_sweep:"):
             st.session_state.history = []
             st.rerun()

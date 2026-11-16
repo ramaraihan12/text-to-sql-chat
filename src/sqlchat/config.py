@@ -1,5 +1,6 @@
 from functools import lru_cache
 
+from pydantic import SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -16,6 +17,9 @@ class Settings(BaseSettings):
     llm_provider: str = "ollama"
     llm_model: str = "qwen3.5:9b"
     ollama_base_url: str = "http://localhost:11434"
+    # Only for LLM_PROVIDER=cloudflare (Workers AI, through its OpenAI-compatible endpoint).
+    cf_api_token: SecretStr | None = None
+    cf_account_id: str | None = None
 
     max_rows: int = 200
     statement_timeout_ms: int = 5000
