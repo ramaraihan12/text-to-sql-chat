@@ -6,7 +6,6 @@ on:
 
 permissions:
   contents: read
-  pull-requests: write
 
 concurrency:
   group: eval-gate-${{ github.event.pull_request.number }}
@@ -18,6 +17,9 @@ jobs:
   changes:
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
     outputs:
       relevant: ${{ steps.files.outputs.relevant }}
     steps:
@@ -25,8 +27,8 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          files=$(gh api --paginate "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files" --jq '.[].filename')
-          if echo "$files" | grep -Eq '^(src/|evals/|pyproject\.toml$|uv\.lock$|\.github/workflows/)'; then
+          files=$(gh api --paginate "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files?per_page=100" --jq '.[] | .filename, (.previous_filename // empty)')
+          if echo "$files" | grep -Eq '^(src/|evals/|pyproject\.toml$|uv\.lock$|\.github/workflows/)|\.python-version$'; then
             echo "relevant=true" >> "$GITHUB_OUTPUT"
           else
             echo "relevant=false" >> "$GITHUB_OUTPUT"
@@ -36,17 +38,17 @@ jobs:
   gate:
     needs: changes
     if: needs.changes.outputs.relevant == 'true'
-    uses: ramaraihan12/evalgate/.github/workflows/gate.yml@main
+    uses: ramaraihan12/evalgate/.github/workflows/gate.yml@v0.1.0
+    permissions:
+      contents: read
+      pull-requests: write
     with:
       app_repo: ${{ github.repository }}
-      head_repo: ${{ github.event.pull_request.head.repo.full_name }}
-      base_sha: ${{ github.event.pull_request.base.sha }}
-      head_sha: ${{ github.event.pull_request.head.sha }}
       pr_number: ${{ github.event.pull_request.number }}
       dataset: evals/sql_cases.jsonl
       model: qwen2.5-coder:3b
       model_digest: f72c60cabf6237b07f6e632b2c48d533cef25eda2efbd34bed21c5e9c01e6225
-      evalgate_ref: main
+      evalgate_ref: v0.1.0
 
   # The one stable name to require in branch protection.
   result:
