@@ -131,7 +131,10 @@ uv run pytest -m integration
 - With a 9B model on a 6 GB RTX 3060 a question takes about 5 to 10 seconds once the model is loaded. The first one after a model swap is slower.
 - On Cloudflare a question takes 3 to 6 seconds and costs roughly 70 to 150 Workers AI neurons (two model calls, three when a query is retried), so the 10,000 a day free allowance covers well over the 40-question cap. The cap leaves room for another demo on the same account.
 - A 9B model handles the everyday questions here, but it's still a 9B model. Read the SQL before you trust a number; it's always one click away.
-- Next I'd add a small eval set of questions with known answers, so a prompt or model change shows up as a number instead of a feeling.
+
+## Eval gate
+
+Pull requests that touch `src/`, `evals/`, `pyproject.toml`, `uv.lock` or the workflows run [evalgate](https://github.com/ramaraihan12/evalgate): 50 questions with known answers (`evals/sql_cases.jsonl`, a few in Bahasa Indonesia and four the data can't answer) go through the real pipeline on the PR and on its base, and a bot comment shows both scores. The check is called `Eval gate` and fails only when the PR is less accurate and the drop is bigger than noise (an exact McNemar test, p < 0.05). The model is `qwen2.5-coder:3b` on a GitHub runner, pinned by digest, not the Llama 3.3 the live demo uses. With 50 cases only large drops show up, so a pass means "no big drop", not "nothing changed".
 
 ## License
 

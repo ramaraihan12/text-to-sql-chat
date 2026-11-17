@@ -1,0 +1,67 @@
+name: eval gate
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: eval-gate-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  # Decides whether the model needs to run at all. The workflow itself always runs, so the
+  # "Eval gate" check below always reports, even for a docs-only PR.
+  changes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      relevant: ${{ steps.files.outputs.relevant }}
+    steps:
+      - id: files
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          files=$(gh api --paginate "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files" --jq '.[].filename')
+          if echo "$files" | grep -Eq '^(src/|evals/|pyproject\.toml$|uv\.lock$|\.github/workflows/)'; then
+            echo "relevant=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "relevant=false" >> "$GITHUB_OUTPUT"
+            echo "No app, eval or workflow files changed, skipping the model run." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+  gate:
+    needs: changes
+    if: needs.changes.outputs.relevant == 'true'
+    uses: ramaraihan12/evalgate/.github/workflows/gate.yml@main
+    with:
+      app_repo: ${{ github.repository }}
+      head_repo: ${{ github.event.pull_request.head.repo.full_name }}
+      base_sha: ${{ github.event.pull_request.base.sha }}
+      head_sha: ${{ github.event.pull_request.head.sha }}
+      pr_number: ${{ github.event.pull_request.number }}
+      dataset: evals/sql_cases.jsonl
+      model: qwen2.5-coder:3b
+      model_digest: f72c60cabf6237b07f6e632b2c48d533cef25eda2efbd34bed21c5e9c01e6225
+      evalgate_ref: main
+
+  # The one stable name to require in branch protection.
+  result:
+    name: Eval gate
+    needs: [changes, gate]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - env:
+          CHANGES: ${{ needs.changes.result }}
+          RELEVANT: ${{ needs.changes.outputs.relevant }}
+          GATE: ${{ needs.gate.result }}
+        run: |
+          if [ "$CHANGES" != "success" ]; then echo "could not tell what changed"; exit 1; fi
+          if [ "$RELEVANT" != "true" ]; then echo "nothing to evaluate in this PR"; exit 0; fi
+          if [ "$GATE" = "success" ]; then echo "gate passed"; exit 0; fi
+          echo "gate result: $GATE"; exit 1
