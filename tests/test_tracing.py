@@ -44,6 +44,11 @@ def _ok_answer() -> Answer:
         ("Telp.0812-3456-7890", "Telp.[phone]"),
         ("Rp 1,050,000,000", "Rp 1,050,000,000"),
         ("Rp 1.050.000.000", "Rp 1.050.000.000"),
+        ("card 4111 1111 1111 1111", "card [number]"),
+        ("call 415-555-0132", "call [number]"),
+        ("2026-11-18", "2026-11-18"),
+        ("Rp 1,500,000", "Rp 1,500,000"),
+        ("05.11.2026 pukul 14.30", "05.11.2026 pukul 14.30"),
         ("call 0812" + chr(0x2010) + "3456" + chr(0x2013) + "7890", "call [phone]"),
     ],
 )
@@ -105,6 +110,18 @@ def test_echoed_long_id_is_removed_from_answer_and_sql():
     out = _output("orders of id 3174012345678901", answer)
     assert out["answer"] == "Id [number] spent 98765432."
     assert out["sql"] == "WHERE id = [number]"
+
+
+def test_echoed_card_is_removed_from_answer_and_sql():
+    answer = Answer(
+        "q",
+        "ok",
+        "Card 4111 1111 1111 1111 paid 98765432.",
+        sql="WHERE card = '4111-1111-1111-1111'",
+    )
+    out = _output("whose card is 4111 1111 1111 1111?", answer)
+    assert out["answer"] == "Card [number] paid 98765432."
+    assert out["sql"] == "WHERE card = '[number]'"
 
 
 def test_sample_rate_clamps(monkeypatch):

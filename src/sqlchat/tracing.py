@@ -39,6 +39,11 @@ _EMAIL = re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+")
 # Only numbers that start with + or 0 count as phones, so dates, times and long amounts that
 # begin with another digit are left alone. U+2010 to U+2015 are the unicode hyphens.
 _PHONE = re.compile(r"(?<![\d+])(?<!\d[.,])[+0]\d[\d\s().\u2010-\u2015-]{6,}\d")
+# Digit groups with no leading + or 0 (a card, a US phone). The lookahead also rejects ':' so
+# "2026-11-18 10:30" is not joined with the hour, the lookbehind so "1 500 000 000" is not cut.
+_GROUPED = re.compile(
+    r"(?<![\d.,])(?<!\d[ \u2010-\u2015-])\d{2,4}(?:[ \u2010-\u2015-]\d{2,4}){2,}(?![\d.,:])"
+)
 _DIGITS = re.compile(r"\d{6,}")
 _TOKEN = re.compile(r"[A-Za-z0-9_-]{24,}")
 # A number as it may be written in an answer or in SQL: digit groups split by one separator.
@@ -54,12 +59,18 @@ def redact(text: str, *, full: bool = True) -> str:
     if not full:
         return text
     text = _PHONE.sub(_phone_or_keep, text)
+    text = _GROUPED.sub(_grouped_or_keep, text)
     return _DIGITS.sub("[number]", text)
 
 
 def _phone_or_keep(match: re.Match[str]) -> str:
     value = match.group(0)
     return "[phone]" if sum(c.isdigit() for c in value) >= 9 else value
+
+
+def _grouped_or_keep(match: re.Match[str]) -> str:
+    value = match.group(0)
+    return "[number]" if sum(c.isdigit() for c in value) >= 9 else value
 
 
 def removed_digits(question: str) -> dict[str, str]:
@@ -75,6 +86,15 @@ def removed_digits(question: str) -> dict[str, str]:
         return match.group()
 
     text = _PHONE.sub(phone, text)
+
+    def grouped(match: re.Match[str]) -> str:
+        digits = "".join(c for c in match.group() if c.isdigit())
+        if len(digits) >= 9:
+            found[digits] = "[number]"
+            return "[number]"
+        return match.group()
+
+    text = _GROUPED.sub(grouped, text)
     for run in _DIGITS.findall(text):
         found.setdefault(run, "[number]")
     return found
