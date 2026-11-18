@@ -1,8 +1,8 @@
 """Sampled, redacted tracing of questions to Langfuse Cloud.
 
 Off unless LANGFUSE_PUBLIC_KEY and LANGFUSE_SECRET_KEY are both set. One OTLP/HTTP POST (the
-legacy ingestion API is gone on Langfuse Cloud), with a short timeout, on a background thread so
-the answer on screen never waits for it. Nothing here may raise.
+legacy ingestion API is gone on Langfuse Cloud), with a 1 second timeout per phase, on a
+background thread so the answer on screen never waits for it. Nothing here may raise.
 """
 
 import hashlib
@@ -24,7 +24,7 @@ log = logging.getLogger(__name__)
 APP = "sql-chat"
 DEFAULT_HOST = "https://cloud.langfuse.com"
 DEFAULT_SAMPLE_RATE = 0.25
-TIMEOUT_SECONDS = 2.0
+TIMEOUT_SECONDS = 1.0
 QUESTION_CAP = 500
 ANSWER_CAP = 2000
 SLOW_SECONDS = 15.0
@@ -35,19 +35,22 @@ NOTICE = (
 )
 
 _EMAIL = re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+")
-_ID_PHONE = re.compile(r"(?<![\d+])(?:\+62|62|0)8\d[\d\s().-]{6,}\d")
-_INTL_PHONE = re.compile(r"(?<![\d+])\+?\d[\d\s().-]{7,}\d")
+# Only numbers that start with + or 0 count as phones, so dates, times and long amounts that
+# begin with another digit are left alone. U+2010 to U+2015 are the unicode hyphens.
+_PHONE = re.compile(r"(?<![\d+.])[+0]\d[\d\s().\u2010-\u2015-]{6,}\d")
 _DIGITS = re.compile(r"\d{6,}")
 _TOKEN = re.compile(r"[A-Za-z0-9_-]{24,}")
 
 
-def redact(text: str) -> str:
+def redact(text: str, *, full: bool = True) -> str:
+    """Replace personal data. `full=False` applies only the email and token rules."""
     # Tokens go before phones and numbers: a hex key with a run of digits would otherwise be
     # split by the number rule and leave pieces the token rule can no longer match.
     text = _EMAIL.sub("[email]", text)
     text = _TOKEN.sub("[token]", text)
-    text = _ID_PHONE.sub("[phone]", text)
-    text = _INTL_PHONE.sub(_phone_or_keep, text)
+    if not full:
+        return text
+    text = _PHONE.sub(_phone_or_keep, text)
     return _DIGITS.sub("[number]", text)
 
 
@@ -56,9 +59,10 @@ def _phone_or_keep(match: re.Match[str]) -> str:
     return "[phone]" if sum(c.isdigit() for c in value) >= 9 else value
 
 
-def clean(text: str, cap: int) -> str:
-    # Cap first so a huge input isn't scanned, then again in case a redaction grew it.
-    return redact(text[:cap])[:cap]
+def clean(text: str, cap: int, *, full: bool = True) -> str:
+    # Redact a bounded slice, then cut: the cut can't leave half a number behind and the
+    # regexes never run over a huge string.
+    return redact(text[: cap * 2], full=full)[:cap]
 
 
 def sample_rate() -> float:
@@ -106,9 +110,12 @@ def build_batch(
 ) -> dict[str, Any]:
     end = now or datetime.now(UTC)
     start = datetime.fromtimestamp(end.timestamp() - seconds, UTC)
+    # The answer and the SQL come from the synthetic demo database, not from the visitor, so
+    # they only get the email and token rules. Amounts, dates and row figures stay readable.
+    # The question is typed by the visitor and keeps the full redaction.
     output = {
-        "answer": clean(answer.text, ANSWER_CAP) if answer else "",
-        "sql": clean(answer.sql, ANSWER_CAP) if answer and answer.sql else None,
+        "answer": clean(answer.text, ANSWER_CAP, full=False) if answer else "",
+        "sql": clean(answer.sql, ANSWER_CAP, full=False) if answer and answer.sql else None,
         "row_count": len(answer.result.rows) if answer and answer.result else 0,
     }
     question_in = {"question": clean(question, QUESTION_CAP)}
@@ -191,7 +198,8 @@ def send_trace(
             json=payload,
             auth=(os.environ["LANGFUSE_PUBLIC_KEY"], os.environ["LANGFUSE_SECRET_KEY"]),
             headers={"x-langfuse-ingestion-version": "4"},
-            timeout=TIMEOUT_SECONDS,
+            # Every phase gets the full second; the thread is off the answer path.
+            timeout=httpx.Timeout(TIMEOUT_SECONDS),
         )
         if not 200 <= resp.status_code < 300:
             # Status only: the body could echo the payload.
@@ -213,12 +221,15 @@ def send_trace_in_background(
 ) -> None:
     if not enabled():
         return
-    threading.Thread(
-        target=send_trace,
-        args=(question, answer),
-        kwargs={"model": model, "seconds": seconds, "error": error},
-        daemon=True,
-    ).start()
+    try:
+        threading.Thread(
+            target=send_trace,
+            args=(question, answer),
+            kwargs={"model": model, "seconds": seconds, "error": error},
+            daemon=True,
+        ).start()
+    except Exception as exc:
+        log.warning("trace not started (%s)", type(exc).__name__)
 
 
 def _nanos(moment: datetime) -> str:

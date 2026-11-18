@@ -11,17 +11,6 @@ from sqlchat.pipeline import Answer
 from tests.fakes import city_revenue
 
 
-@pytest.fixture(autouse=True)
-def _clean_env(monkeypatch):
-    for name in (
-        "LANGFUSE_PUBLIC_KEY",
-        "LANGFUSE_SECRET_KEY",
-        "LANGFUSE_HOST",
-        "TRACE_SAMPLE_RATE",
-    ):
-        monkeypatch.delenv(name, raising=False)
-
-
 @pytest.fixture
 def keys(monkeypatch):
     monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "pk-test")
@@ -47,6 +36,10 @@ def _ok_answer() -> Answer:
         ("key 3f9a8b7c1234567d9e0f1a2b3c4d5e6f end", "key [token] end"),
         ("key " + "a1b2c3d4e5" * 4 + " end", "key [token] end"),
         ("revenue in 2026-09-01 was 12345", "revenue in 2026-09-01 was 12345"),
+        ("on 2026-11-18 10:30 sharp", "on 2026-11-18 10:30 sharp"),
+        ("total Rp 1.500.000.000 now", "total Rp 1.500.000.000 now"),
+        ("total 1 500 000 000", "total 1 500 000 000"),
+        ("call 0812" + chr(0x2010) + "3456" + chr(0x2013) + "7890", "call [phone]"),
     ],
 )
 def test_redact(text, expected):
@@ -59,6 +52,30 @@ def test_redact_order_email_before_number():
 
 def test_clean_caps():
     assert len(tracing.clean("a b " * 1000, 500)) <= 500
+
+
+def test_clean_redacts_before_cutting():
+    out = tracing.clean("x" * 497 + " 0812-3456-7890", 500)
+    assert "0812" not in out and "78" not in out
+
+
+def test_light_redaction_keeps_amounts_but_not_emails():
+    text = "a@b.com paid 1234567 at 081234567890 " + "k" * 30
+    assert tracing.redact(text, full=False) == "[email] paid 1234567 at 081234567890 [token]"
+
+
+def test_output_keeps_figures_question_does_not():
+    answer = Answer("q", "ok", "Revenue was 12345678 for a@b.com", sql="SELECT 1234567")
+    payload = tracing.build_batch(
+        "my number 12345678", answer, model="m", seconds=1, flags=[], rate=1
+    )
+    a = _attrs(payload)
+    out = json.loads(_str(a, "langfuse.observation.output"))
+    assert out["answer"] == "Revenue was 12345678 for [email]"
+    assert out["sql"] == "SELECT 1234567"
+    assert json.loads(_str(a, "langfuse.observation.input")) == {
+        "question": "my number [number]"
+    }
 
 
 def test_sampling_is_deterministic():
@@ -150,7 +167,7 @@ def test_sends_one_post(monkeypatch, keys):
     assert args == ("https://cloud.langfuse.com/api/public/otel/v1/traces",)
     assert kwargs["headers"] == {"x-langfuse-ingestion-version": "4"}
     assert kwargs["auth"] == ("pk-test", "sk-test")
-    assert kwargs["timeout"] == 2.0
+    assert kwargs["timeout"] == httpx.Timeout(1.0)
     json.dumps(kwargs["json"])
 
 
@@ -182,3 +199,12 @@ def test_exceptions_swallowed(monkeypatch, keys, caplog):
     assert tracing.send_trace("q", _ok_answer(), model="m", seconds=1) is False
     assert "sk-test" not in caplog.text
     assert "ConnectTimeout" in caplog.text
+
+
+def test_thread_start_failure_swallowed(monkeypatch, keys, caplog):
+    def boom(self):
+        raise RuntimeError("can't start new thread")
+
+    monkeypatch.setattr(tracing.threading.Thread, "start", boom)
+    tracing.send_trace_in_background("q", _ok_answer(), model="m", seconds=1)
+    assert "RuntimeError" in caplog.text

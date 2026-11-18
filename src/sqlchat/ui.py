@@ -95,14 +95,11 @@ def main() -> None:
             # Model server down, bad API key, quota gone, database gone. The details go to the
             # log, not to a public page.
             log.exception("question failed")
-            send_trace_in_background(
-                question,
-                None,
-                model=settings.llm_model,
-                seconds=time.perf_counter() - started,
-                error=True,
-            )
+            seconds = time.perf_counter() - started
             st.error("Something went wrong before an answer came back. Please try again soon.")
+            send_trace_in_background(
+                question, None, model=settings.llm_model, seconds=seconds, error=True
+            )
             return
         turn = Turn(answer, time.perf_counter() - started)
         _render_answer(turn, settings)
