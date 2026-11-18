@@ -46,6 +46,10 @@ class Answer:
     attempts: list[Attempt] = field(default_factory=list)
 
 
+# The reason runs to the closing quote, fence or line end; an apostrophe inside a word stays.
+_NO_SQL = re.compile(r"""NO_SQL[ :]*((?:[^'"`\n]|'(?=\w))*)""")
+
+
 class TextToSql:
     def __init__(self, model: BaseChatModel, tools: SqlTools) -> None:
         self._model = model
@@ -58,8 +62,10 @@ class TextToSql:
 
         for _ in range(MAX_ATTEMPTS):
             reply = _text(self._model.invoke(messages))
-            if reply.startswith("NO_SQL"):
-                reason = reply.removeprefix("NO_SQL").lstrip(" :")
+            # The model sometimes wraps the marker in a fence or a SELECT string literal.
+            marker = _NO_SQL.search(reply)
+            if marker:
+                reason = marker.group(1).strip()
                 return Answer(question, "no_sql", reason or "That isn't in the sales data.")
 
             candidate = extract_sql(reply)

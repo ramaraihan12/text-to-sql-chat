@@ -188,6 +188,7 @@ def test_flags():
     assert tracing.flags_for(empty, 1) == ["empty_result"]
     assert tracing.flags_for(Answer("q", "failed", "x"), 1) == ["sql_error"]
     assert tracing.flags_for(Answer("q", "blocked", "x"), 1) == ["refused"]
+    assert tracing.flags_for(Answer("q", "no_sql", "x"), 1) == ["no_sql"]
     assert tracing.flags_for(None, 20, error=True) == ["error", "slow"]
 
 

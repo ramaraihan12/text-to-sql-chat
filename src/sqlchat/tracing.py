@@ -144,6 +144,8 @@ def flags_for(answer: Answer | None, seconds: float, *, error: bool = False) -> 
             flags.append("sql_error")
         elif answer.status == "blocked":
             flags.append("refused")
+        elif answer.status == "no_sql":
+            flags.append("no_sql")
         elif answer.status == "ok" and answer.result is not None and not answer.result.rows:
             flags.append("empty_result")
     if error:
