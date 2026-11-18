@@ -1,11 +1,12 @@
 """Sampled, redacted tracing of questions to Langfuse Cloud.
 
-Off unless LANGFUSE_PUBLIC_KEY and LANGFUSE_SECRET_KEY are both set. One POST to the ingestion
-endpoint, with a short timeout, on a background thread so the answer on screen never waits for it.
-Nothing here may raise.
+Off unless LANGFUSE_PUBLIC_KEY and LANGFUSE_SECRET_KEY are both set. One OTLP/HTTP POST (the
+legacy ingestion API is gone on Langfuse Cloud), with a short timeout, on a background thread so
+the answer on screen never waits for it. Nothing here may raise.
 """
 
 import hashlib
+import json
 import logging
 import os
 import re
@@ -34,18 +35,20 @@ NOTICE = (
 )
 
 _EMAIL = re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+")
-_ID_PHONE = re.compile(r"(?<![\w+])(?:\+62|62|0)8\d[\d\s().-]{6,}\d")
-_INTL_PHONE = re.compile(r"(?<![\w+])\+?\d[\d\s().-]{7,}\d")
+_ID_PHONE = re.compile(r"(?<![\d+])(?:\+62|62|0)8\d[\d\s().-]{6,}\d")
+_INTL_PHONE = re.compile(r"(?<![\d+])\+?\d[\d\s().-]{7,}\d")
 _DIGITS = re.compile(r"\d{6,}")
 _TOKEN = re.compile(r"[A-Za-z0-9_-]{24,}")
 
 
 def redact(text: str) -> str:
+    # Tokens go before phones and numbers: a hex key with a run of digits would otherwise be
+    # split by the number rule and leave pieces the token rule can no longer match.
     text = _EMAIL.sub("[email]", text)
+    text = _TOKEN.sub("[token]", text)
     text = _ID_PHONE.sub("[phone]", text)
     text = _INTL_PHONE.sub(_phone_or_keep, text)
-    text = _DIGITS.sub("[number]", text)
-    return _TOKEN.sub("[token]", text)
+    return _DIGITS.sub("[number]", text)
 
 
 def _phone_or_keep(match: re.Match[str]) -> str:
@@ -116,44 +119,48 @@ def build_batch(
         "flags": flags,
         "sample_rate": rate,
     }
-    trace_id = str(uuid.uuid4())
     level = "ERROR" if "error" in flags else "WARNING" if flags else "DEFAULT"
+    attributes = [
+        _text("langfuse.observation.type", "generation"),
+        _text("langfuse.trace.name", f"{APP}.ask"),
+        _text("langfuse.environment", "production"),
+        _text("langfuse.release", release),
+        {
+            "key": "langfuse.trace.tags",
+            "value": {
+                "arrayValue": {
+                    "values": [
+                        {"stringValue": t} for t in [f"app:{APP}", *(f"flag:{f}" for f in flags)]
+                    ]
+                }
+            },
+        },
+        _text("langfuse.observation.level", level),
+        _text("langfuse.observation.model.name", model),
+        _text("langfuse.observation.input", json.dumps(question_in)),
+        _text("langfuse.observation.output", json.dumps(output)),
+        _text("langfuse.observation.metadata.app", APP),
+        _text("langfuse.observation.metadata.model", model),
+        _text("langfuse.observation.metadata.latency_ms", str(metadata["latency_ms"])),
+        _text("langfuse.observation.metadata.flags", json.dumps(flags)),
+        _text("langfuse.observation.metadata.sample_rate", str(rate)),
+    ]
+    span = {
+        "traceId": uuid.uuid4().hex,
+        "spanId": uuid.uuid4().hex[:16],
+        "name": "answer",
+        "kind": 1,
+        "startTimeUnixNano": _nanos(start),
+        "endTimeUnixNano": _nanos(end),
+        "attributes": attributes,
+        "status": {"code": 2 if "error" in flags else 1},
+    }
     return {
-        "batch": [
+        "resourceSpans": [
             {
-                "id": str(uuid.uuid4()),
-                "type": "trace-create",
-                "timestamp": _iso(end),
-                "body": {
-                    "id": trace_id,
-                    "timestamp": _iso(start),
-                    "name": f"{APP}.ask",
-                    "environment": "production",
-                    "release": release,
-                    "input": question_in,
-                    "output": output,
-                    "tags": [f"app:{APP}", *(f"flag:{f}" for f in flags)],
-                    "metadata": metadata,
-                },
-            },
-            {
-                "id": str(uuid.uuid4()),
-                "type": "generation-create",
-                "timestamp": _iso(end),
-                "body": {
-                    "id": str(uuid.uuid4()),
-                    "traceId": trace_id,
-                    "name": "answer",
-                    "environment": "production",
-                    "startTime": _iso(start),
-                    "endTime": _iso(end),
-                    "model": model,
-                    "input": question_in,
-                    "output": output,
-                    "level": level,
-                    "metadata": metadata,
-                },
-            },
+                "resource": {"attributes": [_text("service.name", APP)]},
+                "scopeSpans": [{"scope": {"name": APP}, "spans": [span]}],
+            }
         ]
     }
 
@@ -179,12 +186,16 @@ def send_trace(
             question, answer, model=model, seconds=seconds, flags=flags, rate=rate, release=release
         )
         host = (os.environ.get("LANGFUSE_HOST") or DEFAULT_HOST).rstrip("/")
-        httpx.post(
-            f"{host}/api/public/ingestion",
+        resp = httpx.post(
+            f"{host}/api/public/otel/v1/traces",
             json=payload,
             auth=(os.environ["LANGFUSE_PUBLIC_KEY"], os.environ["LANGFUSE_SECRET_KEY"]),
+            headers={"x-langfuse-ingestion-version": "4"},
             timeout=TIMEOUT_SECONDS,
         )
+        if not 200 <= resp.status_code < 300:
+            # Status only: the body could echo the payload.
+            log.warning("trace rejected: status %s", resp.status_code)
         return True
     except Exception as exc:
         # Type only: the message could carry the payload or a key.
@@ -210,5 +221,9 @@ def send_trace_in_background(
     ).start()
 
 
-def _iso(moment: datetime) -> str:
-    return moment.isoformat(timespec="milliseconds").replace("+00:00", "Z")
+def _nanos(moment: datetime) -> str:
+    return str(int(moment.timestamp() * 1000) * 1_000_000)
+
+
+def _text(key: str, value: str) -> dict[str, Any]:
+    return {"key": key, "value": {"stringValue": value}}
