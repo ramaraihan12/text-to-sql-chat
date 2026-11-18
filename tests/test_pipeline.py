@@ -152,6 +152,30 @@ def test_no_sql_reply_is_passed_through() -> None:
     assert db.executed == []
 
 
+def test_no_sql_wrapped_in_a_select_is_still_a_refusal() -> None:
+    db = FakeDatabase()
+    model = scripted_model(
+        "SELECT\n  'NO_SQL: Data only runs from 2025-01-01 to 2026-09-30' AS reason\nLIMIT 200"
+    )
+
+    answer = TextToSql(model, make_tools(db)).ask("What was total revenue in 2031?")
+
+    assert answer.status == "no_sql"
+    assert answer.text == "Data only runs from 2025-01-01 to 2026-09-30"
+    assert db.executed == []
+
+
+def test_no_sql_inside_a_code_fence_is_still_a_refusal() -> None:
+    db = FakeDatabase()
+    model = scripted_model("```\nNO_SQL: the database has no weather data\n```")
+
+    answer = TextToSql(model, make_tools(db)).ask("Will it rain in Bandung tomorrow?")
+
+    assert answer.status == "no_sql"
+    assert answer.text == "the database has no weather data"
+    assert db.executed == []
+
+
 def test_connection_errors_are_not_retried() -> None:
     db = FakeDatabase(psycopg.OperationalError("connection refused"))
     model = scripted_model(GOOD_SQL)
