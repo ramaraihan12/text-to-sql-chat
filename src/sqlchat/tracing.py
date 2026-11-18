@@ -8,6 +8,7 @@ background thread so the answer on screen never waits for it. Nothing here may r
 import hashlib
 import json
 import logging
+import math
 import os
 import re
 import threading
@@ -37,9 +38,11 @@ NOTICE = (
 _EMAIL = re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+")
 # Only numbers that start with + or 0 count as phones, so dates, times and long amounts that
 # begin with another digit are left alone. U+2010 to U+2015 are the unicode hyphens.
-_PHONE = re.compile(r"(?<![\d+.])[+0]\d[\d\s().\u2010-\u2015-]{6,}\d")
+_PHONE = re.compile(r"(?<![\d+])(?<!\d[.,])[+0]\d[\d\s().\u2010-\u2015-]{6,}\d")
 _DIGITS = re.compile(r"\d{6,}")
 _TOKEN = re.compile(r"[A-Za-z0-9_-]{24,}")
+# A number as it may be written in an answer or in SQL: digit groups split by one separator.
+_NUMBER_TOKEN = re.compile(r"\d+(?:[ .\u2010-\u2015-]\d+)*")
 
 
 def redact(text: str, *, full: bool = True) -> str:
@@ -59,17 +62,50 @@ def _phone_or_keep(match: re.Match[str]) -> str:
     return "[phone]" if sum(c.isdigit() for c in value) >= 9 else value
 
 
-def clean(text: str, cap: int, *, full: bool = True) -> str:
+def removed_digits(question: str) -> dict[str, str]:
+    """Digit strings the full rules remove from the question, mapped to their placeholder."""
+    text = _TOKEN.sub("[token]", _EMAIL.sub("[email]", question))
+    found: dict[str, str] = {}
+
+    def phone(match: re.Match[str]) -> str:
+        digits = "".join(c for c in match.group() if c.isdigit())
+        if len(digits) >= 9:
+            found[digits] = "[phone]"
+            return "[phone]"
+        return match.group()
+
+    text = _PHONE.sub(phone, text)
+    for run in _DIGITS.findall(text):
+        found.setdefault(run, "[number]")
+    return found
+
+
+def _scrub(text: str, removed: dict[str, str]) -> str:
+    def swap(match: re.Match[str]) -> str:
+        digits = "".join(c for c in match.group() if c.isdigit())
+        for secret, placeholder in removed.items():
+            if secret in digits:
+                return placeholder
+        return match.group()
+
+    return _NUMBER_TOKEN.sub(swap, text)
+
+
+def clean(text: str, cap: int, *, full: bool = True, removed: dict[str, str] | None = None) -> str:
     # Redact a bounded slice, then cut: the cut can't leave half a number behind and the
     # regexes never run over a huge string.
-    return redact(text[: cap * 2], full=full)[:cap]
+    out = redact(text[: cap * 2], full=full)
+    if removed:
+        out = _scrub(out, removed)
+    return out[:cap]
 
 
 def sample_rate() -> float:
     try:
-        return float(os.environ.get("TRACE_SAMPLE_RATE", DEFAULT_SAMPLE_RATE))
+        rate = float(os.environ.get("TRACE_SAMPLE_RATE", DEFAULT_SAMPLE_RATE))
     except ValueError:
         return DEFAULT_SAMPLE_RATE
+    return rate if math.isfinite(rate) and 0.0 <= rate <= 1.0 else DEFAULT_SAMPLE_RATE
 
 
 def is_sampled(question: str, rate: float) -> bool:
@@ -112,10 +148,16 @@ def build_batch(
     start = datetime.fromtimestamp(end.timestamp() - seconds, UTC)
     # The answer and the SQL come from the synthetic demo database, not from the visitor, so
     # they only get the email and token rules. Amounts, dates and row figures stay readable.
-    # The question is typed by the visitor and keeps the full redaction.
+    # The question is typed by the visitor and keeps the full redaction. Digits the question
+    # lost to that redaction are also removed wherever the answer or SQL echo them.
+    removed = removed_digits(question)
     output = {
-        "answer": clean(answer.text, ANSWER_CAP, full=False) if answer else "",
-        "sql": clean(answer.sql, ANSWER_CAP, full=False) if answer and answer.sql else None,
+        "answer": clean(answer.text, ANSWER_CAP, full=False, removed=removed) if answer else "",
+        "sql": (
+            clean(answer.sql, ANSWER_CAP, full=False, removed=removed)
+            if answer and answer.sql
+            else None
+        ),
         "row_count": len(answer.result.rows) if answer and answer.result else 0,
     }
     question_in = {"question": clean(question, QUESTION_CAP)}

@@ -39,6 +39,11 @@ def _ok_answer() -> Answer:
         ("on 2026-11-18 10:30 sharp", "on 2026-11-18 10:30 sharp"),
         ("total Rp 1.500.000.000 now", "total Rp 1.500.000.000 now"),
         ("total 1 500 000 000", "total 1 500 000 000"),
+        ("HP0812-3456-7890", "HP[phone]"),
+        ("WA+62 812 3456 7890", "WA[phone]"),
+        ("Telp.0812-3456-7890", "Telp.[phone]"),
+        ("Rp 1,050,000,000", "Rp 1,050,000,000"),
+        ("Rp 1.050.000.000", "Rp 1.050.000.000"),
         ("call 0812" + chr(0x2010) + "3456" + chr(0x2013) + "7890", "call [phone]"),
     ],
 )
@@ -65,15 +70,49 @@ def test_light_redaction_keeps_amounts_but_not_emails():
 
 
 def test_output_keeps_figures_question_does_not():
-    answer = Answer("q", "ok", "Revenue was 12345678 for a@b.com", sql="SELECT 1234567")
+    answer = Answer("q", "ok", "Revenue was 87654321 for a@b.com", sql="SELECT 1234567")
     payload = tracing.build_batch(
         "my number 12345678", answer, model="m", seconds=1, flags=[], rate=1
     )
     a = _attrs(payload)
     out = json.loads(_str(a, "langfuse.observation.output"))
-    assert out["answer"] == "Revenue was 12345678 for [email]"
+    assert out["answer"] == "Revenue was 87654321 for [email]"
     assert out["sql"] == "SELECT 1234567"
     assert json.loads(_str(a, "langfuse.observation.input")) == {"question": "my number [number]"}
+
+
+def _output(question, answer):
+    payload = tracing.build_batch(question, answer, model="m", seconds=1, flags=[], rate=1)
+    return json.loads(_str(_attrs(payload), "langfuse.observation.output"))
+
+
+def test_echoed_phone_is_removed_from_answer_and_sql():
+    answer = Answer(
+        "q",
+        "ok",
+        "Found 3 rows for 0812 3456 7890 with revenue 12345678 on 2026-11-18.",
+        sql="SELECT * FROM c WHERE phone ILIKE '%0812 3456 7890%'",
+    )
+    out = _output("who is 0812 3456 7890?", answer)
+    assert out["answer"] == "Found 3 rows for [phone] with revenue 12345678 on 2026-11-18."
+    assert out["sql"] == "SELECT * FROM c WHERE phone ILIKE '%[phone]%'"
+
+
+def test_echoed_long_id_is_removed_from_answer_and_sql():
+    answer = Answer(
+        "q", "ok", "Id 3174012345678901 spent 98765432.", sql="WHERE id = 3174012345678901"
+    )
+    out = _output("orders of id 3174012345678901", answer)
+    assert out["answer"] == "Id [number] spent 98765432."
+    assert out["sql"] == "WHERE id = [number]"
+
+
+def test_sample_rate_clamps(monkeypatch):
+    for bad in ("nan", "inf", "-1", "1.5", "lots"):
+        monkeypatch.setenv("TRACE_SAMPLE_RATE", bad)
+        assert tracing.sample_rate() == 0.25
+    monkeypatch.setenv("TRACE_SAMPLE_RATE", "0.5")
+    assert tracing.sample_rate() == 0.5
 
 
 def test_sampling_is_deterministic():
