@@ -13,6 +13,7 @@ from sqlchat.config import Settings, get_settings
 from sqlchat.db import QueryResult
 from sqlchat.limits import DailyQuota, check_question
 from sqlchat.pipeline import Answer, TextToSql, build_pipeline
+from sqlchat.tracing import NOTICE, send_trace_in_background
 
 log = logging.getLogger(__name__)
 
@@ -69,6 +70,7 @@ def main() -> None:
     for turn in history:
         _render_turn(turn, settings)
 
+    st.caption(NOTICE)
     question = st.chat_input(
         "Ask about revenue, products, stores or customers",
         max_chars=settings.max_question_chars,
@@ -93,11 +95,20 @@ def main() -> None:
             # Model server down, bad API key, quota gone, database gone. The details go to the
             # log, not to a public page.
             log.exception("question failed")
+            send_trace_in_background(
+                question,
+                None,
+                model=settings.llm_model,
+                seconds=time.perf_counter() - started,
+                error=True,
+            )
             st.error("Something went wrong before an answer came back. Please try again soon.")
             return
         turn = Turn(answer, time.perf_counter() - started)
         _render_answer(turn, settings)
     history.append(turn)
+    # After the answer is on screen, and on a thread, so the trace never holds anything up.
+    send_trace_in_background(question, answer, model=settings.llm_model, seconds=turn.seconds)
 
 
 def _refusal(question: str, settings: Settings) -> str | None:

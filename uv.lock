@@ -2237,6 +2237,7 @@ name = "text-to-sql-chat"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "httpx" },
     { name = "langchain" },
     { name = "langchain-google-genai" },
     { name = "langchain-ollama" },
@@ -2262,6 +2263,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "httpx", specifier = ">=0.28.1" },
     { name = "langchain", specifier = ">=1.4.6" },
     { name = "langchain-anthropic", marker = "extra == 'anthropic'", specifier = ">=1.7.6" },
     { name = "langchain-google-genai", specifier = ">=4.4.2" },

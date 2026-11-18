@@ -6,6 +6,8 @@ Ask a sales database questions in plain English or Bahasa Indonesia and get back
 
 **Live demo: [text-to-sql-chat.streamlit.app](https://text-to-sql-chat.streamlit.app)**, no login needed. It runs on Streamlit Community Cloud with Neon Postgres and Llama 3.3 70B on Cloudflare Workers AI. Streamlit puts the app to sleep after 12 hours without traffic, so you may need to click the button to wake it and wait a minute. Questions are capped per visit and to 40 a day across everyone, which keeps it inside the free Workers AI allowance. The day resets at midnight UTC.
 
+**Tracing.** If `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY` are set (plus `LANGFUSE_HOST`, default Langfuse Cloud), about a quarter of questions (`TRACE_SAMPLE_RATE`, picked by a hash of the question) are sent to Langfuse after the answer is shown: the question, the SQL, the answer and the row count, with emails, phone numbers and long digit runs removed. It's off without the keys, runs on a background thread with a 2 second timeout, and a failure is only logged. The chat page says so under the title.
+
 The data is Kopi Lereng, a made-up coffee chain: 14 stores in 10 Indonesian cities, 24 products, 700 loyalty members, about 3,700 orders and 6,800 order lines from January 2025 to September 2026. It's generated from a fixed seed, so every install has the same rows.
 
 ![Streamlit app answering "Revenue per city in September 2026"](docs/screenshot.png)
