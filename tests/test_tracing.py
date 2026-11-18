@@ -73,9 +73,7 @@ def test_output_keeps_figures_question_does_not():
     out = json.loads(_str(a, "langfuse.observation.output"))
     assert out["answer"] == "Revenue was 12345678 for [email]"
     assert out["sql"] == "SELECT 1234567"
-    assert json.loads(_str(a, "langfuse.observation.input")) == {
-        "question": "my number [number]"
-    }
+    assert json.loads(_str(a, "langfuse.observation.input")) == {"question": "my number [number]"}
 
 
 def test_sampling_is_deterministic():
