@@ -165,7 +165,7 @@ def test_catalog_views_are_readable_so_the_validator_has_to_stop_them(reader: Da
 def test_schema_context_has_notes_and_samples(reader: Database) -> None:
     tables = {t.name: t for t in load_schema(reader)}
     assert set(tables) == set(ALLOWED_TABLES)
-    assert "completed" in tables["orders"].description
+    assert "transaction" in tables["orders"].description
     notes = {c.name: c.description for c in tables["order_items"].columns}
     assert "time of sale" in notes["unit_price_idr"]
     assert len(tables["stores"].sample_rows) == 3

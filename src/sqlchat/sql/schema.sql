@@ -57,13 +57,13 @@ CREATE INDEX orders_store_id_idx ON orders (store_id);
 CREATE INDEX orders_customer_id_idx ON orders (customer_id);
 CREATE INDEX orders_ordered_at_idx ON orders (ordered_at);
 
-COMMENT ON TABLE orders IS 'One row per receipt, so one order is one transaction (transaksi). For an average transaction value, total each order first and then average those totals, never AVG over order_items lines. Sales figures should only count status = ''completed''. Data runs from 2025-01-01 to 2026-09-30.';
+COMMENT ON TABLE orders IS 'One row per receipt, so one order is one transaction (transaksi). For an average transaction value, total each order first and then average those totals, never AVG over order_items lines. Data runs from 2025-01-01 to 2026-09-30.';
 COMMENT ON COLUMN orders.store_id IS 'References stores.id.';
 COMMENT ON COLUMN orders.customer_id IS 'References customers.id. NULL for walk-in buyers who are not loyalty members.';
 COMMENT ON COLUMN orders.ordered_at IS 'When the order was paid. Sessions use the Asia/Jakarta (WIB) time zone.';
 COMMENT ON COLUMN orders.channel IS 'One of: dine_in, takeaway, delivery.';
 COMMENT ON COLUMN orders.payment_method IS 'One of: qris, cash, debit_card, ewallet.';
-COMMENT ON COLUMN orders.status IS 'completed or refunded. Refunded orders are not revenue.';
+COMMENT ON COLUMN orders.status IS 'completed or refunded.';
 
 CREATE TABLE order_items (
     id              integer PRIMARY KEY,
@@ -76,7 +76,7 @@ CREATE TABLE order_items (
 CREATE INDEX order_items_order_id_idx ON order_items (order_id);
 CREATE INDEX order_items_product_id_idx ON order_items (product_id);
 
-COMMENT ON TABLE order_items IS 'Lines on a receipt. Revenue = SUM(quantity * unit_price_idr), joined to orders with status = ''completed''.';
+COMMENT ON TABLE order_items IS 'Lines on a receipt. Revenue = SUM(quantity * unit_price_idr).';
 COMMENT ON COLUMN order_items.order_id IS 'References orders.id.';
 COMMENT ON COLUMN order_items.product_id IS 'References products.id.';
 COMMENT ON COLUMN order_items.quantity IS 'Number of units on this line.';
